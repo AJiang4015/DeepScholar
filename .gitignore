@@ -1,0 +1,77 @@
+# See http://help.github.com/ignore-files/ for more about ignoring files.
+
+# compiled output
+/dist
+/tmp
+app/output
+app/updated
+/out-tsc
+# Only exists if Bazel was run
+/bazel-out
+
+# dependencies
+/node_modules
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+.pnpm-store/
+.npm-cache
+.angular/
+
+# Python
+.venv/
+.uv-cache/
+venv/
+env/
+.env
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+
+# profiling files
+chrome-profiler-events*.json
+speed-measure-plugin*.json
+
+# pytest 缓存残留（沙箱环境无法删除的临时目录，git 遍历噪音）
+pytest-cache-files-*/
+.pytest_cache/
+.pytest-tmp/
+_testtmp/
+output/
+updated/
+
+# R2: Agent 执行状态 checkpoint DB（SQLite 运行时状态，含 WAL 伴生文件；跨 session，非产物）
+app/runtime/checkpoints.sqlite*
+
+# IDEs and editors
+/.idea
+.project
+.classpath
+.c9/
+*.launch
+.settings/
+*.sublime-workspace
+
+# IDE - VSCode
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.history/*
+
+# misc
+/.angular/cache
+/.sass-cache
+/connect.lock
+/coverage
+/libpeerconnection.log
+npm-debug.log
+yarn-error.log
+testem.log
+/typings
+
+# System Files
+.DS_Store
+Thumbs.db
