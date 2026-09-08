@@ -1,5 +1,11 @@
 # Spec: 2026-09-03-R2-persistent-checkpoint（ROADMAP R2 会话执行状态持久化）
 
+> **部分取代标注（2026-09-03）**：本 Spec 中「AsyncBridgeSqliteSaver 异步桥接」方案已被
+> `docs/spec/2026-09-03-postgres-checkpoint-migration.md` + `DECISION.md D010` 取代：
+> checkpoint 层演进为 backend 抽象（sqlite 缺省 = 官方 AsyncSqliteSaver；postgres = 官方
+> AsyncPostgresSaver），Bridge 退役；「checkpoint 表族由官方 setup() 版本化自管」沿用并强化。
+> 本 Spec 的持久化边界、fail-fast、thread_id 语义与跨进程恢复判据（marker 反证法）**保持有效**。
+
 > **编号规则**：Pxxx = PROBLEM.md Problem Registry；Rxx = 工程化 Roadmap ID（本任务 = **R2**）。
 > **状态**：**等待审核（AWAITING APPROVAL）**。批准前禁止任何代码/测试/配置/依赖改动。
 > **状态更新（2026-09-02）**：R2 已实施并验证（app/runtime/checkpoint.py、main_agent.py 改造、

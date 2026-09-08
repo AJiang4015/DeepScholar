@@ -7,6 +7,10 @@ langchain-core>=0.2.0       # 基础组件 (Prompt, Message, Tool)
 langchain-community>=0.2.0  # 社区工具集成
 langgraph==1.1.10           # 智能体工作流编排
 langgraph-checkpoint-sqlite==3.0.3  # R2 正式运行时依赖: SqliteSaver(app/runtime/checkpoint.py)，与锁定 langgraph 1.1.10/checkpoint 4.0.3 匹配，勿单独升级
+langgraph-checkpoint-postgres==3.0.5  # PG checkpoint（2026-09）：兼容 checkpoint 4.0.3（3.1.x 需 >=4.1.0，勿升）
+psycopg[binary]>=3.2        # PG 驱动（psycopg 3）
+psycopg-pool>=3.2           # AsyncConnectionPool（checkpoint pool 生命周期）
+aiosqlite>=0.20             # 官方 AsyncSqliteSaver 依赖（app 直接 import，显式声明）
 
 # --- 大模型服务 (LLM Services) ---
 langchain-openai==1.2.1     # OpenAI 接口适配

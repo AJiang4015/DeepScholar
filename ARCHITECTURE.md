@@ -27,7 +27,8 @@
 | app/agent | 智能体组装：模型初始化、主智能体、三个子智能体、提示词加载、run_deep_agent 执行入口 | main_agent.py、llm.py、prompts.py、subagents/ |
 | app/tools | LangChain 工具：网络搜索/DB 查询/RAGFlow 问答/文件读取/文档生成 | tavily_tool.py、db_tools.py、ragflow_tools.py、upload_file_read_tool.py、markdown_tools.py、pdf_tools.py |
 | app/utils | 无业务语义的通用工具：路径解析、Markdown→PDF 底层转换 | path_utils.py、word_converter.py |
-| app/runtime | Checkpoint 运行时层：SQLite Checkpointer 工厂（进程内单例复用、`AGENT_CHECKPOINT_DB` 路径配置、SqliteSaver 异步桥接、DB 不可写 fail-fast）；无业务语义，无 app 内依赖 | checkpoint.py |
+| app/runtime | Checkpoint 运行时层：backend 抽象工厂（`AGENT_CHECKPOINT_BACKEND`=sqlite(缺省,官方 AsyncSqliteSaver)/postgres(官方 AsyncPostgresSaver + AsyncConnectionPool，pool 由 server lifespan 注入)；进程级单例 + loop 亲和、官方 setup() 自管 checkpoint 表族、DB 不可用 fail-fast）；无业务语义，无 app 内依赖 | checkpoint.py |
+| app/research | Research Data Plane（F1+F2）：ResearchRun/SubQuestion/SearchQuery/Source/Evidence（F1）+ Claim/ClaimEvidence/Citation 与 validator R1–R10（F2，0002）；F3 semantic verification（0003 verifications）；F4 conflict detection（0004 conflicts，pair 粒度 + genuine/type invariant）；F5 corroboration（0005 corroborations，claim 作用域 global clustering + 独立性计量，只计量不裁决）；F6 reconciliation（0006 reconciliations，conflict fact + independence signal → claim-level conflict state / contested register，解释/登记不裁决）；F7 research bridge（app/research/bridge.py + extractor.py：真实 run terminal finalization 物化 candidate claims、orchestrate F2–F6、run-level research state；main_agent 唯一接线点，fail-open；不改 Agent-visible context）；RESEARCH_STORE=sqlite(缺省)/postgres/disabled；research_* 表族版本化迁移（0001–0006，F7 无新迁移）；validator 纯只读；verification/detector/review 均 fail-open 或受控（real-LLM 须显式启用，不进自动化 Gate）；呈现编号 [n] 不落库；**不依赖 app/agent**，与 checkpoint 逻辑解耦 | research/*、db/migrations/ |
 | app/ragflow | RAGFlow 配置加载与调用示例 | rag_config.py、knowledge_demo.py |
 | app/prompt | 提示词配置（主智能体 + 三个子智能体） | prompts.yml |
 
@@ -39,11 +40,12 @@
 
 ```text
 app/api/server        → app/agent/main_agent
-app/agent/main_agent  → agent/llm、agent/prompts、agent/subagents/*、tools/*、api/context、api/monitor、runtime/checkpoint
+app/agent/main_agent  → agent/llm、agent/prompts、agent/subagents/*、tools/*、api/context、api/monitor、runtime/checkpoint、research/*
 app/agent/subagents/* → tools/*、agent/prompts
-app/tools/*           → api/context、api/monitor、utils/*、ragflow/rag_config
+app/tools/*           → api/context、api/monitor、utils/*、ragflow/rag_config、research/*
+app/research/*        → 无 app 内依赖（stdlib + pydantic；psycopg 惰性 import）；不依赖 app/agent
 app/utils/*           → 不依赖任何 app 内模块（纯函数 + 三方库）
-app/runtime/checkpoint → 无 app 内依赖（仅 stdlib + langgraph / langgraph-checkpoint-sqlite 三方库）
+app/runtime/checkpoint → 无 app 内依赖（stdlib + langgraph / langgraph-checkpoint / langgraph-checkpoint-sqlite / langgraph-checkpoint-postgres；aiosqlite/psycopg/psycopg-pool 惰性 import）
 app/api/context       → 无（contextvars 标准库）
 app/api/monitor       → api/context
 ```
@@ -78,7 +80,23 @@ payload 统一为 `{"type":"monitor_event","event":...,"message":...,"data":...,
   （`app/utils/sql_security.py` 纯函数层 + `app/tools/db_tools.py` 编排；P001 已 Mitigated，见 D007）。
   部署层"数据库只读账号"未做，属残余风险；白名单数据源为 information_schema 动态发现
   （与 list_sql_tables 的 SHOW TABLES 同集合，拿不到即拒绝，fail-closed）。
-- **checkpoint DB 隔离（R2）**：Agent 执行状态 DB 默认 `app/runtime/checkpoints.sqlite`（env `AGENT_CHECKPOINT_DB` 可覆盖，gitignore 已忽略）；位于 app 内而非 output/ 会话产物区，天然不在 `/api/files`、`/api/download` 的 output 包含性校验可达范围内；DB 不可写/建表失败时工厂 fail-fast 抛错，**不静默回退内存 Checkpointer**。属 Checkpoint 执行状态持久化，非 BaseStore / 长期记忆、非多实例共享方案。
+- **checkpoint 执行状态持久化（R2 演进：backend 抽象）**：Agent 执行状态由
+  `AGENT_CHECKPOINT_BACKEND` 选择后端——`sqlite`（缺省，local/test fallback；官方
+  `AsyncSqliteSaver`，默认 `app/runtime/checkpoints.sqlite`，env `AGENT_CHECKPOINT_DB`
+  可覆盖，gitignore 已忽略）；`postgres`（生产；官方 `AsyncPostgresSaver` +
+  `AsyncConnectionPool`，DSN 来自 env `AGENT_CHECKPOINT_DSN`，pool 由 FastAPI
+  lifespan 创建/关闭并注入 runtime）。checkpoint 表族由官方 saver 的 `setup()` 版本化
+  自管（checkpoint_migrations/checkpoints/checkpoint_blobs/checkpoint_writes），仓库
+  迁移体系禁止触碰。两种后端均位于 output/ 会话产物可达范围之外；初始化/建表失败时
+  fail-fast 抛错，**不静默回退内存或切换后端**。属 Checkpoint 执行状态持久化，
+  非 BaseStore / Research Artifact（research_* 表族归 app/research，另一机制、
+  另一迁移体系）。
+- **Research Artifact Store 配置（F1）**：`RESEARCH_STORE`=sqlite（缺省，本地/测试
+  fallback，`RESEARCH_DB` 覆盖，默认 `app/runtime/research.sqlite`）| postgres（生产，
+  `RESEARCH_DSN` 必填）| disabled；research_* 表族由 `app/research/migrations` 版本化
+  自管（`schema_migrations`），与 checkpoint 表族互不触碰；配置非法/运行期故障 →
+  research plane disabled（fail-open，不阻断 Agent 主链路；工具返回原值）。
+- **凭据**：`.env` 不入库；新增凭据 MUST 只读环境变量并同步 `.env.example`，MUST NOT 硬编码。
 - **凭据**：`.env` 不入库；新增凭据 MUST 只读环境变量并同步 `.env.example`，MUST NOT 硬编码。
 - **已知开放边界**：无认证（P005）、上传内容安全扫描（MIME/魔数，Non-Goal）、
   CORS `allow_origins=["*"]` + `allow_credentials=True`（server.py 中间件配置）。
@@ -97,6 +115,8 @@ payload 统一为 `{"type":"monitor_event","event":...,"message":...,"data":...,
 - **新工具**：`app/tools/x.py`（`@tool` + `monitor.report_tool`）+ 挂到对应智能体 tools 列表。
 - **提示词调优**：只改 `prompts.yml`，不硬编码在 py 文件。
 - **新文件格式支持**：`upload_file_read_tool.py` 分支扩展 + `word_converter.py` 同模式。
+- **新 Research 实体/字段（F1 起）**：`app/research/schemas.py`（模型）+ `app/research/registry.py`
+  （写入函数）+ `db/migrations/NNNN_*.{sqlite,postgres}.sql`（runner 幂等执行，版本递增）。
 
 ## 8. Architecture Change Gate（以下改动 MUST 先记录 Decision）
 

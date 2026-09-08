@@ -13,6 +13,9 @@ from ragflow_sdk import RAGFlow
 
 from app.api.monitor import monitor
 from app.ragflow.rag_config import _load_ragflow_env
+from app.research import context as research_ctx
+from app.research import normalize as research_norm
+from app.research import registry as research_reg
 
 # 模块级复用 RAGFlow 客户端，避免每次工具调用都重新初始化 SDK 对象
 api_key, base_url = _load_ragflow_env()
@@ -110,6 +113,49 @@ def create_ask_delete(chat_name, question) -> str:
 
         # 临时会话只用于本次工具调用，查询结束后删除，避免 RAGFlow 页面堆积无用会话
         use_chat.delete_sessions(ids=[session.id])
+
+        # Research artifact 注册（F1，旁路、fail-open；不改变返回给 Agent 的内容）
+        with research_reg.artifacts_guard("create_ask_delete research register"):
+            ctx_run_id, ctx_subq_id = research_ctx.get_research_context()
+            if ctx_run_id and ctx_subq_id and result:
+                from datetime import datetime, timezone
+
+                fetched_at = datetime.now(timezone.utc).isoformat()
+                assistant_key = research_norm.normalize_assistant_key(chat_name)
+                query_id = research_reg.record_search_query(
+                    ctx_run_id,
+                    ctx_subq_id,
+                    agent="ragflow",
+                    tool="create_ask_delete",
+                    query=question[:8000],
+                    metadata={"chat_name": chat_name},
+                    fetched_at=fetched_at,
+                )
+                if query_id:
+                    source_id = research_reg.upsert_source(
+                        ctx_run_id,
+                        query_id,
+                        source_type="ragflow",
+                        agent="ragflow",
+                        title=chat_name[:500] or "RAGFlow 知识库",
+                        locator=f"ragflow:{assistant_key}",
+                        canonical_key=research_norm.canonical_key_for(
+                            "ragflow", assistant=chat_name
+                        ),
+                        fetched_at=fetched_at,
+                        metadata={"assistant_id": use_chat.id},
+                    )
+                    if source_id:
+                        research_reg.append_evidence(
+                            ctx_run_id,
+                            source_id,
+                            ctx_subq_id,
+                            content=result,
+                            locator=f"ragflow:{use_chat.id}",
+                            extraction_method="rag_answer",
+                            metadata={"assistant": chat_name},
+                            created_at=fetched_at,
+                        )
         return result
     except Exception as e:
         return f"提问失败，错误原因：{str(e)}"

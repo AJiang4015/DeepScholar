@@ -26,9 +26,14 @@ from app.api.monitor import (
     RunTerminalGuard,
     monitor,
     reset_run_context,
+    reset_task_context,
     set_run_context,
+    set_task_context,
 )
-from app.runtime.checkpoint import get_sqlite_checkpointer
+from app.research import context as research_ctx
+from app.research import registry as research_reg
+from app.runtime.checkpoint import get_checkpointer
+from app.runtime.governance.context import get_governance_execution
 
 # 文件类工具由主智能体直接掌握，负责读取上传附件和生成最终交付文档
 from app.tools.markdown_tools import generate_markdown
@@ -39,15 +44,51 @@ from app.utils.upload_guard import restore_uploads_to_session
 # 主智能体是调度中心：
 # 1. tools 只放最终交付相关的文件工具
 # 2. subagents 放网络、数据库、RAGFlow 三类信息获取助手
-# 3. checkpointer 通过 thread_id 保存同一会话中的执行上下文（R2：文件型 SQLite 持久化，
-#    路径由 AGENT_CHECKPOINT_DB 或 app/runtime/checkpoints.sqlite 默认决定，跨重启可恢复）
-main_agent = create_deep_agent(
-    model=model,
-    system_prompt=main_agent_content["system_prompt"],
-    tools=[generate_markdown, convert_md_to_pdf, read_file_content],
-    checkpointer=get_sqlite_checkpointer(),
-    subagents=[database_query_agent, network_search_agent, knowledge_base_agent],
-)
+# 3. checkpointer 通过 thread_id 保存同一会话中的执行上下文（R2 演进：backend 抽象，
+#    sqlite=官方 AsyncSqliteSaver（local/test 缺省）| postgres=官方 AsyncPostgresSaver（生产），
+#    见 app/runtime/checkpoint.py 与 docs/spec/2026-09-03-postgres-checkpoint-migration.md）。
+#
+# 官方 AsyncSaver 构造时必须位于 running event loop（构造时绑定 loop），因此 main_agent
+# 不再于模块 import 期创建 checkpointer；改为 loop 内的 lazy/async 组装（get_main_agent），
+# run_deep_agent 与 FastAPI lifespan（prewarm）均在 loop 内调用。对外契约不变：
+# 不得绕过 run_deep_agent 直接调用 agent.astream（ARCHITECTURE.md §3 红线保持）。
+_main_agent = None
+_main_agent_lock = None
+
+
+def _agent_lock() -> asyncio.Lock:
+    global _main_agent_lock
+    if _main_agent_lock is None:
+        _main_agent_lock = asyncio.Lock()
+    return _main_agent_lock
+
+
+async def get_main_agent():
+    """loop 内 lazy 组装主智能体（进程级缓存，幂等）。
+
+    - 首次调用创建后端 checkpointer（await get_checkpointer()，绑定当前 loop）并编译 agent；
+    - 并发首个请求由 asyncio.Lock 串行化，只创建一次；
+    - 创建失败不缓存（下次调用重试），异常冒泡给调用方（fail-fast）。
+    """
+    global _main_agent
+    if _main_agent is None:
+        async with _agent_lock():
+            if _main_agent is None:
+                checkpointer = await get_checkpointer()
+                agent = create_deep_agent(
+                    model=model,
+                    system_prompt=main_agent_content["system_prompt"],
+                    tools=[generate_markdown, convert_md_to_pdf, read_file_content],
+                    checkpointer=checkpointer,
+                    subagents=[
+                        database_query_agent,
+                        network_search_agent,
+                        knowledge_base_agent,
+                    ],
+                )
+                _main_agent = agent
+    return _main_agent
+
 
 # 当前文件位于 app/agent/main_agent.py，parents[1] 即 app 目录
 project_root_path = Path(__file__).parents[1].resolve()
@@ -94,12 +135,43 @@ async def run_deep_agent(task_query, session_id):
     session_dir_token = set_session_context(session_dir_str)
     session_id_token = set_thread_context(session_id)
     # R3：一次 run_deep_agent = 一个 run_id（区分同 thread 的多次任务 / R2 续跑），
-    # 所有事件在 emit 时快照 thread_id + run_id；finally 中必须 reset 防泄漏
-    run_id = uuid.uuid4().hex
+    # 所有事件在 emit 时快照 thread_id + run_id；finally 中必须 reset 防泄漏。
+    # Step 4 Batch 1/3（correlation）：governance 服务接线预生成 run_id 并经 execution ctx 注入时
+    # 沿用该值 → TaskRecord.run_id == ResearchRun.run_id == monitor run_id（三方同源）；
+    # Batch 3(C)：governed 时 monitor envelope 附 task_id（bare → None）。
+    gov_exec = get_governance_execution()
+    run_id = (
+        gov_exec.run_id
+        if gov_exec is not None and gov_exec.run_id
+        else uuid.uuid4().hex
+    )
     run_token = set_run_context(run_id)
+    task_token = set_task_context(gov_exec.task_id if gov_exec is not None else None)
+
+    # F1：创建 ResearchRun + root SubQuestion（旁路、fail-open）。
+    # research_runs.run_id 与执行 run_id 同源（唯一关联键），但 ResearchRun 不是
+    # checkpoint——两套数据面不共表/不共迁移/不共事务。工具经 research ContextVar
+    # 读到 (run_id, root sub_question_id) 完成 SearchQuery/Source/Evidence 注册。
+    research_tokens = None
+    research_run_ids = research_reg.create_run_and_root(
+        session_id, task_query[:2000], run_id=run_id
+    )
+    if research_run_ids:
+        research_tokens = research_ctx.set_research_context(*research_run_ids)
 
     # checkpointer 依赖 thread_id 区分会话记忆；同一 session_id 会复用同一条执行上下文
     config = {"configurable": {"thread_id": session_id}}
+
+    # F8 S1（additive，Spec §8）：governance-active 时注入 GovernanceCallbackHandler +
+    # recursion_limit（framework 安全上限；运行 config 优先于 create_agent 的 with_config）。
+    # 非 governance 执行（无 context）→ 与历史行为完全一致。
+    governance_active = gov_exec is not None
+    if gov_exec is not None:
+        if gov_exec.recursion_limit is not None:
+            config.setdefault("recursion_limit", gov_exec.recursion_limit)
+        _cbs = list(config.get("callbacks") or [])
+        _cbs.append(gov_exec.make_handler())
+        config["callbacks"] = _cbs
 
     # 工作环境指令是运行时动态补充的，约束模型只在当前会话目录读写文件
     path_instruction = f"""
@@ -126,7 +198,8 @@ async def run_deep_agent(task_query, session_id):
         monitor.report_session_dir(session_dir_str)
 
         # astream 会持续产出模型节点、工具节点和子智能体节点的状态片段
-        async for chunk in main_agent.astream(
+        agent = await get_main_agent()
+        async for chunk in agent.astream(
             {"messages": [{"role": "user", "content": task_query + path_instruction}]},
             config=config,
         ):
@@ -161,24 +234,45 @@ async def run_deep_agent(task_query, session_id):
 
         # astream 正常结束 → run 级一次性终态（保留 data.result 与前端语义）
         if terminal_guard.may_emit("task_result"):
+            # F7 Research State Bridge（Spec §7 唯一接线点）：terminal finalization 阶段物化
+            # Candidate Claims 并 orchestrate F2–F6（fail-open，绝不阻断 task_result / 主链路）。
+            # 取消/异常路径（CancelledError / Exception 分支）不执行 finalization。
+            if research_run_ids is not None:
+                try:
+                    from app.research import bridge as research_bridge
+
+                    research_bridge.finalize_run(
+                        run_id, final_content if final_content is not None else ""
+                    )
+                except Exception as f7_exc:  # noqa: BLE001 - fail-open
+                    print(f"[ResearchBridge] finalize_run failed (fail-open): {f7_exc}")
+            research_reg.set_run_status(run_id, "finished")
             monitor.report_task_result(
                 final_content if final_content is not None else ""
             )
 
     except asyncio.CancelledError:
         if terminal_guard.may_emit("task_cancelled"):
+            research_reg.set_run_status(run_id, "cancelled")
             monitor.report_task_cancelled()
         raise
     except Exception as e:
         # 异步执行异常也走 monitor，保证前端能收到明确错误事件（公共 report_error）
         if terminal_guard.may_emit("error"):
-            monitor.report_error(
-                f"执行主智能发生异常信息：{str(e)}", {"error": str(e)}
-            )
+            research_reg.set_run_status(run_id, "failed")
+            monitor.report_error(f"执行主智能发生异常信息：{str(e)}", {"error": str(e)})
+        # F8 S1（additive，Spec §8）：governance-active 时异常必须上抛，使上层 Governance
+        # Controller 能观察到真实异常（否则 governance abort / agent exception 会被吞掉并
+        # 被误判为正常完成 → budget control 失明）。非 governance 执行保持吞掉语义不变。
+        if governance_active:
+            raise
     finally:
         # 任务结束后恢复 ContextVar，避免后续请求复用到本次会话目录、thread_id 或 run_id
         reset_session_context(session_dir_token, session_id_token)
         reset_run_context(run_token)
+        reset_task_context(task_token)
+        if research_tokens is not None:
+            research_ctx.reset_research_context(*research_tokens)
 
 
 if __name__ == "__main__":

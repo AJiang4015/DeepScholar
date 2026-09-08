@@ -13,8 +13,11 @@ from langchain.chat_models import init_chat_model
 # find_dotenv 会从当前目录向上查找 .env，适合脚本和 Web 服务从不同入口启动的场景
 load_dotenv(find_dotenv())
 
-# 使用 OpenAI 兼容协议接入模型；具体模型名由 .env 中的 LLM_QWEN_MAX 控制
+# 使用 OpenAI 兼容协议接入模型；具体模型名由 .env 中的 LLM_QWEN_MAX 控制。
+# API Key 由 .env 的 OPENAI_API_KEY 提供，其值经 python-dotenv 插值引用系统变量
+# BAILIAN_API_KEY（${BAILIAN_API_KEY}），只从环境读取，不落库、不打印。
 model = init_chat_model(
     model=os.getenv("LLM_QWEN_MAX"),
     model_provider="openai",
+    api_key=os.getenv("OPENAI_API_KEY"),
 )

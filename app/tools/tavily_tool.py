@@ -6,19 +6,37 @@ Tavily 网络搜索工具模块
 """
 
 import os
-from typing import Literal
+from datetime import datetime, timezone
+from typing import Literal, Optional
 
 from dotenv import load_dotenv
 from langchain_core.tools import tool
 from tavily import TavilyClient
 
 from app.api.monitor import monitor
+from app.research import context as research_ctx
+from app.research import normalize as research_norm
+from app.research import registry as research_reg
 
 load_dotenv()
 
 
 # TavilyClient 是实际访问搜索服务的客户端；模块级复用可避免每次工具调用重复初始化
 tavily_client = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
+
+
+def _iso_or_none(value) -> Optional[str]:
+    """把 Tavily 的 published_date 归一化为 UTC ISO；不可解析返回 None。"""
+    if not value:
+        return None
+    try:
+        return (
+            datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            .astimezone(timezone.utc)
+            .isoformat()
+        )
+    except (TypeError, ValueError):
+        return None
 
 
 # @tool 会把函数签名和 docstring 暴露给 DeepAgents，模型据此决定是否调用以及如何填参
@@ -52,12 +70,69 @@ def internet_search(
     )
 
     # Tavily 返回 query、results、title、url、content 等结构化字段，后续由子智能体阅读并汇总
-    return tavily_client.search(
+    result = tavily_client.search(
         query=query,
         topic=topic,
         max_results=max_results,
         include_raw_content=include_raw_content,
     )
+
+    # Research artifact 注册（F1，旁路、fail-open）：不改变返回给 Agent 的内容
+    with research_reg.artifacts_guard("internet_search research register"):
+        ctx_run_id, ctx_subq_id = research_ctx.get_research_context()
+        if ctx_run_id and ctx_subq_id and isinstance(result, dict):
+            fetched_at = datetime.now(timezone.utc).isoformat()
+            query_id = research_reg.record_search_query(
+                ctx_run_id,
+                ctx_subq_id,
+                agent="network_search",
+                tool="internet_search",
+                query=query,
+                topic=topic,
+                metadata={
+                    "max_results": max_results,
+                    "include_raw_content": include_raw_content,
+                },
+                fetched_at=fetched_at,
+            )
+            if query_id:
+                for item in result.get("results") or []:
+                    raw_url = item.get("url") or ""
+                    canonical_url = research_norm.canonicalize_url(raw_url)
+                    if not canonical_url:
+                        continue
+                    source_id = research_reg.upsert_source(
+                        ctx_run_id,
+                        query_id,
+                        source_type="web",
+                        agent="network_search",
+                        title=(item.get("title") or raw_url)[:500],
+                        locator=raw_url,
+                        canonical_key=canonical_url,
+                        canonical_url=canonical_url,
+                        fetched_at=fetched_at,
+                        published_at=_iso_or_none(item.get("published_date")),
+                        metadata={"score": item.get("score")},
+                    )
+                    if source_id:
+                        content = item.get("content") or ""
+                        if include_raw_content and item.get("raw_content"):
+                            content = item["raw_content"]
+                        if content.strip():
+                            research_reg.append_evidence(
+                                ctx_run_id,
+                                source_id,
+                                ctx_subq_id,
+                                content=content,
+                                locator=raw_url,
+                                extraction_method="web_result",
+                                metadata={
+                                    "score": item.get("score"),
+                                    "title": item.get("title"),
+                                },
+                                created_at=fetched_at,
+                            )
+    return result
 
 
 if __name__ == "__main__":

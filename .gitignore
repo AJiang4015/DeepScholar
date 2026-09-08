@@ -41,8 +41,25 @@ _testtmp/
 output/
 updated/
 
+# Agent/工具工作缓存（下载的源码 tarball、解压目录、docs 等，非项目源码）
+.deepagents-fc/
+.ruff_cache/
+.mypy_cache/
+.pytype/
+.hypothesis/
+*.egg-info/
+
+# 测试残留文件（沙箱测试写入仓库根目录的产物）
+/t6.txt
+
 # R2: Agent 执行状态 checkpoint DB（SQLite 运行时状态，含 WAL 伴生文件；跨 session，非产物）
 app/runtime/checkpoints.sqlite*
+
+# F1: Research Artifact Store（SQLite 本地 fallback 运行时状态；跨 session，非产物）
+app/runtime/research.sqlite*
+
+# F8: Runtime Governance Store（SQLite 本地运行时状态；跨 session，非产物）
+app/runtime/governance/governance.sqlite*
 
 # IDEs and editors
 /.idea

@@ -20,6 +20,9 @@ from mysql.connector import Error, connect
 
 from app.api.context import get_thread_context
 from app.api.monitor import monitor
+from app.research import context as research_ctx
+from app.research import normalize as research_norm
+from app.research import registry as research_reg
 from app.utils.sql_security import (
     SqlValidationError,
     normalize_plain_table_name,
@@ -67,6 +70,71 @@ def _audit_sql(
         ms,
         extra,
     )
+
+
+def _register_db_artifact(
+    *,
+    tool: str,
+    query: str,
+    table: str | None,
+    params_provided: bool,
+    text_result: str,
+    columns: list,
+    rows: list,
+) -> None:
+    """Research artifact 注册（F1，旁路、fail-open）：数据库查询 → Query/Source/Evidence。
+
+    绝不记录 params 参数值；SQL 文本本身（只读、经白名单）可入研究面。
+    """
+    ctx_run_id, ctx_subq_id = research_ctx.get_research_context()
+    if not (ctx_run_id and ctx_subq_id):
+        return
+    from datetime import datetime, timezone
+
+    fetched_at = datetime.now(timezone.utc).isoformat()
+    sql_sha = research_reg.sha256_hex(query or "")
+    with research_reg.artifacts_guard(f"{tool} research register"):
+        query_id = research_reg.record_search_query(
+            ctx_run_id,
+            ctx_subq_id,
+            agent="database",
+            tool=tool,
+            query=(query or "")[:8000],
+            metadata={
+                "table": table,
+                "params_provided": params_provided,
+                "rows": len(rows),
+                "columns_head": (list(columns) or [])[:20],
+            },
+            fetched_at=fetched_at,
+        )
+        if query_id:
+            source_id = research_reg.upsert_source(
+                ctx_run_id,
+                query_id,
+                source_type="db",
+                agent="database",
+                title="数据库查询结果",
+                locator=query_id,
+                canonical_key=research_norm.canonical_key_for("db", query_id=query_id),
+                fetched_at=fetched_at,
+                metadata={
+                    "sql_sha256": sql_sha,
+                    "rows": len(rows),
+                    "columns_head": (list(columns) or [])[:20],
+                },
+            )
+            if source_id:
+                research_reg.append_evidence(
+                    ctx_run_id,
+                    source_id,
+                    ctx_subq_id,
+                    content=text_result,
+                    locator=f"db:{query_id}",
+                    extraction_method="db_result",
+                    metadata={"sql_sha256": sql_sha, "tool": tool},
+                    created_at=fetched_at,
+                )
 
 
 # 集中读取数据库配置，后续三个工具都复用这份连接参数
@@ -237,6 +305,17 @@ def get_table_data(table_name) -> str:
                 # 1,张三,18
                 header_str = ",".join(columns)
                 data_str = "\n".join(results)
+
+                # Research artifact 注册（F1，旁路、fail-open；不改变返回给 Agent 的内容）
+                _register_db_artifact(
+                    tool="get_table_data",
+                    query=f"SELECT * FROM {table} LIMIT 100",
+                    table=table,
+                    params_provided=False,
+                    text_result=f"{header_str}\n{data_str}",
+                    columns=columns,
+                    rows=rows,
+                )
                 return f"{header_str}\n{data_str}"
     except SqlValidationError as exc:
         # 校验失败（非法表名 / 未授权表 / 白名单获取失败）：拒绝并给模型可理解提示
@@ -325,7 +404,18 @@ def execute_sql_query(query, params=None) -> str:
                     "ok",
                     duration_ms=(time.perf_counter() - started) * 1000,
                 )
-                return f"{header_str}\n{data_str}"
+                text_result = f"{header_str}\n{data_str}"
+                # Research artifact 注册（F1，旁路、fail-open；不改变返回给 Agent 的内容）
+                _register_db_artifact(
+                    tool="execute_sql_query",
+                    query=safe_query,
+                    table=None,
+                    params_provided=params is not None,
+                    text_result=text_result,
+                    columns=columns,
+                    rows=rows,
+                )
+                return text_result
     except Error as exc:
         # 详细异常写审计日志；给模型的提示保持简洁，不暴露连接细节
         _audit_sql(

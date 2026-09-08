@@ -10,6 +10,7 @@ import {
   FilePdfOutlined,
   FileSearchOutlined,
   FileTextOutlined,
+  PlayCircleOutlined,
   StopOutlined,
   ToolOutlined,
 } from "@ant-design/icons";
@@ -19,6 +20,13 @@ import { getDownloadUrl } from "../lib/api";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 import type { MonitorMessage, OutputFile } from "../types";
 
+/** 治理终态（durable 面校正后写入；status 取值见 governance TaskStatus）。 */
+export interface TurnTaskStatus {
+  status: string;
+  error?: string | null;
+  terminalReason?: string | null;
+}
+
 export interface ChatTurn {
   id: string;
   content: string;
@@ -26,6 +34,7 @@ export interface ChatTurn {
   files: OutputFile[];
   isRunning: boolean;
   result: string;
+  taskStatus?: TurnTaskStatus | null;
   timestamp: string;
 }
 
@@ -152,6 +161,9 @@ function EventIcon({ event }: { event: string }) {
   }
   if (event === "session_created") {
     return <FileSearchOutlined aria-hidden />;
+  }
+  if (event === "task_started") {
+    return <PlayCircleOutlined aria-hidden />;
   }
   if (event === "task_result") {
     return <CheckCircleOutlined aria-hidden />;
@@ -290,13 +302,61 @@ function ThinkingLoader({ durationLabel }: { durationLabel: string }) {
   );
 }
 
+/** 治理终态 → 用户可读短标签（对应后端 TaskStatus / TerminalReason）。 */
+const TERMINAL_STATUS_LABELS: Record<string, string> = {
+  completed: "已完成",
+  failed: "执行失败",
+  cancelled: "已取消",
+  timed_out: "任务超时",
+  budget_exceeded: "预算超限",
+  superseded: "已被新任务取代",
+  aborted: "任务中止",
+  orphan_reclaimed: "已回收",
+};
+
+function statusLabel(status: string): string {
+  return TERMINAL_STATUS_LABELS[status] ?? `已结束（${status}）`;
+}
+
+/** 断线窗口内任务已结束、但最终文本未保留时的消息区说明。 */
+function endedNoticeText(status?: string, error?: string | null): string {
+  switch (status) {
+    case "completed":
+      return "任务已完成（连接中断期间结束），最终回复未保留在本会话；本次产物见下方「输出文件」。";
+    case "failed":
+      return error
+        ? `任务执行失败：${error}（连接中断期间结束）。`
+        : "任务执行失败（连接中断期间结束）。";
+    case "cancelled":
+      return "任务已取消（连接中断期间结束）。";
+    case "timed_out":
+      return "任务超时（连接中断期间结束）。";
+    case "budget_exceeded":
+      return "任务达到执行预算上限（连接中断期间结束）。";
+    case "superseded":
+      return "任务已被新任务取代（连接中断期间结束）。";
+    case "aborted":
+      return "任务已中止（连接中断期间结束）。";
+    case "orphan_reclaimed":
+      return "任务已被回收（连接中断期间结束）。";
+    default:
+      return status
+        ? `任务已结束（${status}）（连接中断期间结束）。`
+        : "任务完成后会在这里显示最终回复。";
+  }
+}
+
 function AssistantMessage({
   events,
   files,
   isRunning,
   result,
+  taskStatus,
   timestamp,
-}: Pick<ChatTurn, "events" | "files" | "isRunning" | "result" | "timestamp">) {
+}: Pick<
+  ChatTurn,
+  "events" | "files" | "isRunning" | "result" | "taskStatus" | "timestamp"
+>) {
   const [now, setNow] = useState(Date.now());
 
   useEffect(() => {
@@ -313,9 +373,16 @@ function AssistantMessage({
 
   const durationLabel = getThinkingDuration(events, timestamp, isRunning, now);
   const isCancelled = events.some((event) => event.event === "task_cancelled");
+  // durable 面校正：live 无结果/未收尾，但治理记录已终态（如断线窗口内超时/预算/取代）
+  const endedByGovernance =
+    !isRunning && !result && Boolean(taskStatus && taskStatus.status !== "running");
   const syncLabel = isRunning
     ? `生成中 · 思考 ${durationLabel}`
-    : `${isCancelled ? "已取消" : "已同步"} · 用时 ${durationLabel}`;
+    : result
+      ? `${isCancelled ? "已取消" : "已同步"} · 用时 ${durationLabel}`
+      : endedByGovernance && taskStatus
+        ? `${statusLabel(taskStatus.status)} · 用时 ${durationLabel}`
+        : `${isCancelled ? "已取消" : "已同步"} · 用时 ${durationLabel}`;
 
   return (
     <article className="chat-message chat-message--assistant">
@@ -348,6 +415,8 @@ function AssistantMessage({
           <div className="assistant-answer assistant-answer--pending">
             {isRunning ? (
               <ThinkingLoader durationLabel={durationLabel} />
+            ) : endedByGovernance && taskStatus ? (
+              endedNoticeText(taskStatus.status, taskStatus.error)
             ) : (
               "任务完成后会在这里显示最终回复。"
             )}
@@ -430,6 +499,7 @@ export function ConversationThread({
             files={turn.files}
             isRunning={turn.isRunning}
             result={turn.result}
+            taskStatus={turn.taskStatus}
             timestamp={turn.timestamp}
           />
         </div>

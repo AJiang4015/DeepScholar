@@ -14,6 +14,13 @@
 | 前端类型 + 构建 | `cd frontend && pnpm build`（= `tsc -b && vite build`） | TS 类型检查与打包 |
 | 手动 E2E | 见 §3 | 端到端链路（需 MySQL 与 LLM/Tavily/RAGFlow 凭据） |
 | 安全回归（pytest） | `python -m pytest tests/ -q`（系统 Python；含 uv 环境时 `uv run pytest tests/ -q`） | 安全敏感改动的自动化回归（P001 修复引入：tests/test_db_tools.py 纯函数安全测试，无外部服务依赖、随时可跑；集成测试文件在环境缺失时自动 skip） |
+| Checkpoint 回归（pytest，含 PG 门控） | 同上 `tests/ -q` | checkpoint backend 抽象 / AsyncSaver 恢复 / replay 验证。sqlite 用例任何环境可跑；PG 用例（test_checkpoint_postgres.py、test_checkpoint_replay_verify.py 的 PG 类）仅当 `psycopg`/`psycopg-pool`/`langgraph-checkpoint-postgres` 可导入 **且** `AGENT_CHECKPOINT_DSN_TEST` 指向独立测试库时才执行，否则整类 skip（TESTING.md §1 skipif 纪律；PG 服务可经 docker/docker-compose.postgres.yaml 启动） |
+| Research 回归（pytest，含 PG 门控） | 同上 `tests/ -q` | research data plane（app/research）：normalize/registry/provenance/fail-open/store+migration；F2 claims/validator（R1–R10）/render_citations；F3 semantic verification；F4 conflict detection；F5 corroboration（global clustering / independent_count / cross-side independence）；F6 reconciliation（outcome 判定 / Unknown≠NotIndependent / claim register / run_unresolved）；F7 research bridge（Claim materialization / anchored-unanchored 语义 / F2–F6 orchestration enabled-skipped_off / finalization identity / fail-open；sqlite 默认；PG 门控 test_*_postgres.py 需 psycopg + `RESEARCH_DSN_TEST`） |
+
+**PG 测试环境纪律（2026-09 起）**：`AGENT_CHECKPOINT_DSN_TEST` / `RESEARCH_DSN_TEST`
+**只允许指向独立测试库**，禁止指向开发/生产库；不采用共享库临时 schema 作为默认方案。
+checkpoint 表族由官方 saver setup() 自管，research_* 表族由 app/research/migrations 自管，
+测试不得修改其 DDL。
 
 **不存在**：jest、前端测试目录。pytest 自 P001 修复（DECISION.md D007）起存在——
 tests/ 已建立、以系统 Python 运行，但尚未在 pyproject.toml / uv.lock 声明为 dev

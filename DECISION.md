@@ -191,3 +191,287 @@ langcheckpoint==4.0.3 匹配；最新 3.1.1 要求 checkpoint>=4.1.0 不兼容�
 LangGraph/LangChain 依赖**。本更新推翻了原决策中"不改 uv.lock / pyproject.toml"的安排。
 验证：`uv sync --frozen` 通过；`tests/test_checkpoint_recovery.py`（R2 restart recovery）全绿；
 完整 pytest / ruff / compileall 通过（详见 R2 spec §12）。
+
+## D010 — PostgreSQL Checkpoint Migration：backend 抽象 + 官方 AsyncSaver（取代 D009 的 Bridge）
+
+- **Status**: Accepted
+- **Context**: 项目进入 Evidence-Grounded Deep Research 演进，多任务并发 / 事件持久化 /
+  Research Artifact（后续 F1）/ 多实例部署对持久化底座提出新要求；SQLite 单写者 + 自定义
+  `AsyncBridgeSqliteSaver` 不满足长期目标。用户批准 `ARCHITECTURE_CHANGE_REVIEW.md`
+  （G1–G8 全通过）与 `docs/spec/2026-09-03-postgres-checkpoint-migration.md`。
+  属"改变数据持久化方案 + 新增核心依赖"（ARCHITECTURE.md §8 Gate）。
+- **Decision**:
+  - 生产统一 PostgreSQL，SQLite 仅 local/test fallback；不引入 Redis/Neo4j/Vector/Kafka。
+  - `AGENT_CHECKPOINT_BACKEND`=sqlite(缺省)/postgres；sqlite 用官方 `AsyncSqliteSaver`
+    （aiosqlite），postgres 用官方 `AsyncPostgresSaver` + `AsyncConnectionPool`
+    （FastAPI lifespan 持有/注入）；**删除 `AsyncBridgeSqliteSaver`**（同版本官方
+    AsyncSaver 已存在且 aiosqlite 已在锁内，原 workaround 无必要）。
+  - 版本配对：`langgraph-checkpoint-postgres==3.0.5`（requires checkpoint>=2.1.2,<5，
+    兼容锁定 4.0.3；3.1.x 需 >=4.1.0 不可用）+ `psycopg[binary]>=3.2` +
+    `psycopg-pool>=3.2` + `aiosqlite>=0.20`（转直接依赖）；**冻结** langgraph 1.1.10 /
+    checkpoint 4.0.3 / sqlite-saver 3.0.3 / deepagents 0.5.7 / langchain 1.2.17。
+  - `main_agent` 改为 loop 内 lazy 组装（`get_main_agent()`，官方 AsyncSaver 构造绑定
+    loop）；`run_deep_agent` 对外契约不变。
+  - Replay 边界：Execution Replay（checkpoint 全历史 + parent 链 + LangGraph graph runtime
+    resume/time-travel）与 Research Reconstruction（artifact store，F1）逻辑解耦；本阶段
+    只做实 Execution Replay 数据面，**不开放 resume 产品入口**，不实现副作用幂等
+    （契约记录于 migration spec §4.10）。使用 full saver，禁止 shallow。
+  - 旧 SQLite checkpoint 不自动迁移、不删除；切换后旧 thread 不跨 backend 续跑（文档化）。
+- **Alternatives**: 升级 LangGraph 到支持更高版本/换库——冻结约束下不成立；自研通用
+  Bridge 包 sync PostgresSaver——浪费 PG 原生 async/pool（ACR 选项 C，拒绝）；
+  保留 SQLite 单机方案——不满足多实例共享与长期底座（拒绝）。
+- **Rejected Alternatives**: 引入 Alembic（research_* 表族迁移暂用零依赖版本化 SQL +
+  轻量 runner；checkpoint 表族归 saver.setup()）；事件/artifact 同层混存。
+- **Consequences**: checkpoint_* 表族由官方 setup() 自管；research_* 表族（F1）另行
+  迁移体系；fail-fast 语义保持（从模块 import 期移至 lifespan prewarm/首次 run，已文档化）；
+  AsyncSaver 的 sync 方法仅异线程可用 → 恢复测试 runner 改 async 写法（语义判据不变）。
+- **Constraints Created**: `app/runtime/checkpoint.py` 保持无 app 内依赖；`AGENT_CHECKPOINT_*`
+  env 只读、`.env.example` 同步；跨 loop 复用应用注入 pool 报错；禁止修改 checkpoint 表族；
+  PG 测试仅允许独立测试库（`AGENT_CHECKPOINT_DSN_TEST`）。
+- **Related Problems**: 无新增
+- **Related Architecture**: ARCHITECTURE.md §2（app/runtime）、§3（依赖方向）、§5（checkpoint 持久化）、§8（持久化 Gate）
+- **验证（本环境，锁定版本隔离环境）**：锁定环境（langgraph 1.1.10 / checkpoint 4.0.3 /
+  sqlite-saver 3.0.3 / langchain-core 1.3.3）全仓 pytest **215 passed, 6 skipped**
+  （6 skipped = 5 PG 门控 + 1 MySQL 集成，环境无对应服务）；replay probe 复跑通过
+  （history=3 / parent 链闭合 / resume 不重跑 / 按 checkpoint_id 取历史）。PG 实测 P1–P7
+  待用户运行环境执行（见 migration spec §7.4/§10）。
+
+## D011 — F1 Research Artifact Foundation：Research Data Plane 落地
+
+- **Status**: Accepted
+- **Context**: Evidence-Grounded 演进需要回答"Agent 获取过什么 / 来自哪里 / 哪段可作为证据"；
+  Phase 0（checkpoint 双后端）提供 execution persistence，本决策建立独立 Research Data Plane。
+  用户批准 `docs/spec/2026-09-07-research-artifact-foundation.md`（G-F1-1~6 全通过）。
+- **Decision**:
+  - 新增 `app/research/`（config/ids/normalize/schemas/context/store/migrations/registry/provenance），
+    **不依赖 app.agent**、零新增依赖；
+  - 实体：ResearchRun → SubQuestion(root-only, F9 树化) → SearchQuery → Source → Evidence；
+    run_id 与执行 run_id 同源（唯一关联键），但 ResearchRun ≠ checkpoint（不共表/迁移/事务）；
+  - 双后端 DDL（sqlite TEXT json / postgres JSONB）由 `db/migrations/0001_*.{sqlite,postgres}.sql`
+    + 轻量 runner（schema_migrations，幂等）管理；checkpoint 表族不可触碰；
+  - Source 注册确定性（canonical URL 归一化、系统生成 id、runtime 时间戳），**禁 LLM 生成 id/URL**；
+  - 运行期 artifact 写入 **fail-open**（`artifacts_guard`，store 故障仅告警，工具返回原值；
+    RESEARCH_STORE=disabled 可整体关闭）；run 创建/终态由 run_deep_agent 两处轻量钩子驱动；
+  - Evidence = candidate evidence / groundable content；Claim-Citation 绑定留 F2（只留扩展边界）；
+    恢复/重放产生重复 query/evidence 为 append 语义（本阶段允许，task_call_id 幂等留后续）。
+- **Alternatives**: 把 artifact 塞进 LangGraph state / checkpoint——污染执行态且不可独立查询（拒绝）；
+  引入 ORM/Alembic/图库——零依赖纪律拒绝；先做 HTTP provenance API——G8 裁决后置 P1 末尾。
+- **Rejected Alternatives**: 增加 Planner/Verification/Citation Agent（不新增 Agent）；
+  side-effect idempotency 实现（只留 metadata 字段位）。
+- **Consequences**: 主链路工具返回与模型可见上下文不变；Agent Message 不含 artifact；
+  Research 故障不阻断 Agent；工具/主智能体 import research 模块（无环：research 不 import agent）。
+- **Constraints Created**: `app/research` 不得 import `app/agent`；工具签名/docstring 不可因注册而变；
+  research_* 表族只经 app/research/migrations 演进；新实体 = schemas + registry 函数 + NNNN migration；
+  PG 测试仅允许 `RESEARCH_DSN_TEST` 独立测试库。
+- **Related Problems**: 无新增
+- **Related Architecture**: ARCHITECTURE.md §2/§3/§5/§7（app/research、依赖方向、research 配置、扩展点）
+- **验证（本环境，锁定版本隔离环境）**：F1 新增 43 项测试全绿（normalize/registry/provenance/
+  fail-open/store+migration/PG 门控 2 skip）；全仓 **258 passed, 8 skipped**（=Phase0 215/6 + F1 43/2）；
+  ruff/compileall 全绿；PG RESEARCH_DSN_TEST 实测待用户环境（沿用门控纪律）。
+
+## D012 — F2 Claim / Citation Binding & Validation（rev2 contract 实施）
+
+- **Status**: Accepted
+- **Context**: Evidence-Grounded 主线需把 F1 candidate evidence 提升为可校验引用
+  （Claim ← Evidence → Citation）；用户批准 `docs/spec/2026-09-08-claim-citation-binding.md` rev2
+  （G1–G6 + rev2 四项修正全通过）。本阶段冻结 Phase 0 / F1 baseline。
+- **Decision**:
+  - 0002 迁移仅新增 `claims / claim_evidences / citations` 三表 + 索引，**零 ALTER F1 五表**；
+    checkpoint 表族不触碰；schema_migrations 追加 0002（runner 幂等）。
+  - Registry：`create_claim`（(run_id, statement_sha) 内容级幂等；type/status 枚举受控）、
+    `bind_claim_evidence`（M:N，(claim_id,evidence_id) 幂等，同 run 守卫）、
+    `create_citation`（R2 写前守卫：必须已有 binding；(run_id,claim_id,evidence_id) 幂等；
+    citation_id 稳定 artifact identity，**无呈现编号列**；quote≤500 / locator≤200 无控制符）；
+  - Validator `validate_run -> ViolationReport` 纯函数只读，R1–R10（R3=unsupported、R10=coverage）；
+  - `apply_validation_outcome` 为 claim.status **唯一写入口**（validator 零 side effect）；
+  - Provenance：list_claims / list_citations / get_claim_chain / render_citations
+    （排序 created_at ASC, citation_id ASC；[n] 渲染派生不落库）。
+- **Alternatives**: 呈现编号落库（破坏 identity 稳定/replay 语义，rev2 拒绝）；binding/citation 合一
+  （生命周期不同，G2 拆表）；LLM 参与校验（Verification 域，F2 不引入）。
+- **Rejected Alternatives**: 新 Agent / Graph / Memory / idempotency 实现；Verification/Conflict 提前。
+- **Consequences**: claim.status drafted→validated 语义明确（仅覆盖引用者 validated）；
+  unsupported/referenced 检出不改写 artifact；R1/R4 的 FK-off 审计路径测试为 sqlite 专有，
+  PG 走同规则代码路径。
+- **Constraints Created**: validator 不得写库/不 import 写路径；呈现编号不落库；F2 只增不改 F1；
+  `app/research/validate.py` 纯读；claim_type 枚举仅存证不消费（Verification 扩展点）。
+- **Related Problems**: 无新增
+- **Related Architecture**: ARCHITECTURE.md §2/§3/§7（app/research 扩展）、F2 spec
+- **验证（本环境，锁定版本隔离环境 + 真实 PG）**：F2 sqlite 套件 38 passed；全仓 sqlite-only
+  **296 passed, 15 skipped**；双 DSN（独立测试库）**310 passed, 1 skipped**（连跑稳定）；
+  ruff/compileall/format（仅历史 3 drift 文件未改）全绿。详见 F2 Implementation Report。
+
+
+## D013 — F3 Semantic Verification（verifications 独立表 + fake/optional-real verifier）
+
+- **Status**: Accepted
+- **Context**: F2 已建立结构与 deterministic 校验（Claim/Evidence/Citation/R1–R10）；Evidence-Grounded
+  主线需回答"证据内容是否真的足以支持 Claim"（语义层）。用户批准 docs/spec/2026-09-09-semantic-verification.md
+  rev2（Q1–Q3 定案 + Conditional Approve → Final Gate PASS）。
+- **Decision**:
+  - 0003 迁移仅新增 `verifications` 表（含 verifier_spec 快照 / fingerprint / verdict / confidence /
+    status / error），零 ALTER F1/F2；checkpoint 表族不触碰。
+  - SemanticVerdict 仅 5 种（SUPPORTS/INSUFFICIENT/CONTRADICTS/UNVERIFIABLE/ABSTAIN）；VerifyStatus 仅
+    pending/succeeded/failed；**单条无 partial**（partial 只属 batch/run ExecutionSummary）。
+  - F2 validation errors = 结构 Gate（非空即拒绝）；R3/R10 warning 不阻止单条验证；citation coverage 仅
+    默认候选优先级（budget 策略）；allowed_evidence_ids 显式覆盖。
+  - Evidence.content/quote = factual basis；source metadata 仅 provenance（不是证据内容）。
+  - confidence = 辅助信号（NULL 合法禁伪造）；threshold = deterministic policy（low-confidence→ABSTAIN）。
+  - Verifier 默认 FakeVerifier；real-LLM adapter 可选且须 VERIFY_REAL_LLM=1（controlled，不进自动化 Gate，
+    复用 OpenAI-compatible 栈）；timeout/provider/malformed 确定性重试 1 次；failed→verdict NULL。
+  - 幂等键 UNIQUE(run_id, claim_id, evidence_id, verifier_fingerprint)；spec 升级=新行；不引入 task_call_id。
+  - claim 级只读聚合 supported/contested/partially_supported/unverified；SUPPORTS+CONTRADICTS→contested
+    （只标记不裁决，Conflict Resolution 属后续阶段）。
+- **Alternatives**: 把语义验证并进 Agent（拒：入 Agent 回路/成本）；verdict 含 ERROR（rev2 拆分拒绝）；
+  coverage 当验证（rev2 拒绝）；不持久化（无法溯源 eval，拒）。
+- **Rejected Alternatives**: Conflict Resolution/Source Reliability/Replan/Graph/Memory 提前；新 LLM
+  framework/基础设施；task_call_id。
+- **Consequences**: 语义层与 Agent/报告主链路解耦（verifier 不可用仅产 unverified）；每次 verdict 可溯源到
+  spec/时间；模型升级 = fingerprint 新行可对照。
+- **Constraints Created**: verify.py 纯 research 域（不 import agent）；Gate 失败抛 VerificationGateError；
+  单条状态机禁 partial；claim.status 不写（F2 finalizer 唯一入口不变）；confidence NULL 合法。
+- **Related Problems**: 无新增
+- **Related Architecture**: ARCHITECTURE.md §2/§3（app/research 扩展）、F3 spec rev2
+- **验证（锁定隔离环境 + 真实 PG 独立库）**：F3 sqlite 套件 31 passed（+ validator 等回归 44 passed）；
+  全仓 sqlite-only **327 passed, 18 skipped**；双 DSN **344 passed, 1 skipped**（连跑稳定）；
+  ruff/compileall 绿（format 仅历史 3 drift 文件未改）。详见 F3 Implementation Report。
+
+
+## D014 — F4 Conflict Detection（conflicts 独立 artifact + 受控 detector；不含 Resolution）
+
+- **Status**: Accepted
+- **Context**: F3 只输出 claim 级 `contested`，丢失 pair 级信息且不区分真矛盾与语境差异；
+  用户批准 docs/spec/2026-09-10-conflict-detection.md rev2（Conditional → Final Gate PASS）。
+- **Decision**:
+  - 0004 仅新增 `conflicts`（identity=(run_id,claim_id,evidence_a,evidence_b,detector_fingerprint)，
+    a<b 规范化）；F1/F2/F3 零 ALTER。
+  - 候选默认域 = 同 claim F3 SUPPORTS×CONTRADICTS；explicit_pairs 仅绕过 verdict 候选生成，
+    不绕过 structural/integrity；不引入 confidence / same-verdict / cross-claim。
+  - ConflictStatus 4 态（candidate/confirmed/rejected/failed，无 partial）；genuine/conflict_type
+    invariant 由唯一写路径+测试锁定（§10c）；detector SHALL NOT re-evaluate support。
+  - verification_a/b FK ON DELETE SET NULL + F3 signal 快照存 metadata（防 provenance 丢失）。
+  - 完整性 invariant（同 run/同 claim/双 binding/a<b/≠/verification 对齐）由写前守卫强制
+    （DDL 可移植，不用跨表 CHECK/trigger）。
+  - FakeDetector 默认；real-LLM 可选且须 VERIFY_REAL_LLM=1（不进自动化 Gate）。
+- **Alternatives**: 仅保留 contested 聚合（丢 pair/不可溯源，拒）；verdict 作 identity（冲突天然两证据，拒）；
+  复用 F3 verifier 通道（语义域不同，独立 detector）。
+- **Rejected Alternatives**: Conflict Resolution / Source Reliability / Winner / 跨 claim / same-verdict
+  候选；新 Agent/infra；ALTER Frozen 表。
+- **Consequences**: contested 背后的 pair 事实可查询、可溯源、幂等；为后续 Resolution 提供只读派生视图。
+- **Constraints Created**: conflicts 写入仅经 conflict 模块唯一写路径；genuine/type invariant 与
+  integrity invariants 全项测试锁定；不写 claims/verifications。
+- **Related Problems**: 无新增
+- **Related Architecture**: ARCHITECTURE.md §2/§3（app/research 扩展）、F4 spec rev2
+- **验证（锁定隔离环境 + 真实 PG）**：F4 sqlite 29 passed；全仓 sqlite-only **356 passed, 20 skipped**；
+  双 DSN **375 passed, 1 skipped**（连跑稳定）；ruff/compileall 绿（format 仅历史 3 drift 未改）。
+
+## D015 — F5 Independent Evidence Corroboration（corroborations 独立 artifact；只计量独立性，不裁决）
+
+- **Status**: Accepted / **FROZEN**（F5 Final Gate PASS，2026-09-11；Spec 与 Implementation 不再修改）
+- **Context**: F1–F4 已有证据链+校验+验证+冲突发现，但转载链 A→B→C→D 被误当独立来源、冲突两侧
+  独立性未知（corroboration 高估）；用户批准 docs/spec/2026-09-11-f5-audit-and-independent-corroboration.md
+  rev2（F5 Spec Final Gate PASS）。**核心原则：F5 measures independence; it does not score trust。**
+- **Decision**:
+  - 0005 仅新增 `corroborations`（identity=(run_id, claim_id, method_fingerprint)）；F1–F4 零 ALTER。
+  - Claim 作用域 **global clustering**：同一 universe（SUPPORTS/CONTRADICTS verified evidence → sources）
+    统一 union-find 聚类，support/contradict 只是同一聚类结果的侧视图（不分别聚类）。
+  - deterministic v1 规则锁死：R-URL（canonical_key 相同）/ R-DOMAIN（同 domain 且 path 前 3 段相同
+    或 path 为空）/ R-TITLE（归一化相等或字符集 Jaccard≥0.85）/ R-SHINGLE（5-gram Jaccard≥0.60），
+    **OR 归并**；pairwise 按字典序严格一次；chaining（A≈B、B≈C、A≠C → 同簇）由 union-find 锁定；
+    cluster_key = 簇内最小 canonical_key + `#<n>`（deterministic）。
+  - source_count = distinct source_id；independent_count = distinct global cluster id；
+    cross-side independence = F4 confirmed 冲突两侧 cluster id 交集为空（**仅计量，非 winner/可信**）。
+  - source_profile 仅 descriptive 分布（type/domain/publisher/freshness/agent），无 score 字段。
+  - optional LLM cluster review 默认 OFF（Fake reviewer 测试；real 须 VERIFY_REAL_LLM=1，不进 Gate）；
+    Context Envelope 仅 identification metadata + evidence content（≤8000），无 Agent 历史/run plan/他 claim。
+  - 失败语义：review 失败 → **complete + metadata.review_failed=true**（携带 reason）；
+    deterministic 失败（gate/读取/聚类）→ **failed + error**；complete artifact 幂等复用，
+    failed artifact 重算并 UPDATE 同行（同指纹单行收敛）。
+  - 不引入 task_call_id；无 ranking/weighting/winner/resolution/reliability/authority/confidence。
+- **Alternatives**: A=本方向（接受）；B=Conflict Resolution（依赖 A，暂缓）；C=Evidence-driven control
+  （跨 Agent loop，后置）；D=Claim Graph（明确不做，"graph for graph" 风险）。
+- **Rejected Alternatives**: 对支持/反驳侧分别聚类（漏判转载跨侧）；cluster review 输出信任/权威；
+  引入任务系统/新 Agent/infra。
+- **Consequences**: 转载膨胀与冲突两侧独立性可计量、可复现、幂等；输出供报告展示与未来 resolution/replan
+  只读引用；仅计量不改变 run/claim/verification 语义。
+- **Constraints Created**: corroborations 写入仅经 corroboration 模块唯一写路径；F5 不写 F1–F4 表；
+  source_profile/cluster 输出字段受"无 score"测试锁定。
+- **Related Problems**: 无新增
+- **Related Architecture**: ARCHITECTURE.md §2/§3（app/research 扩展）、F5 spec rev2
+- **验证（锁定隔离环境 + 真实 PG）**：F5 sqlite 24 passed；全仓 sqlite-only **380 passed, 20 skipped**；
+  双 DSN **405 passed, 1 skipped**（连跑稳定）；ruff/compileall 绿（format 仅历史 3 drift 未改）。
+
+## D016 — F6 Conflict Reconciliation（reconciliation + contested register；不裁决）
+
+- **Status**: Accepted（F6 Spec rev2 Final Gate PASS → Implementation 完成，待 F6 Final Gate）
+- **Context**: F4 判 pair、F5 计独立性，但 claim 名下"同源自我矛盾 vs 独立细节不一致 vs 独立真争点"
+  从未被判定登记；F3 `contested` 无法表达该层。Spec rev2 定位：
+  **F6 explains/registers conflict state; it does not adjudicate truth.**
+- **Decision**:
+  - 0006 仅新增 `reconciliations`（identity=(conflict_id, method_fingerprint)；conflict FK CASCADE）；
+    F1–F5 零 ALTER；F6 只读消费 F5 corroboration（support/contradict.cluster_ids 与
+    conflicts_independence[].side_a/side_b.cluster_ids、independent_between_sides）。
+  - outcome 三态锁死：cluster intersection != empty → SAME_ORIGIN_CONTRADICTION；
+    independent + F4 INCONSISTENCY → DETAIL_INCONSISTENCY（仅登记类别）；
+    independent + F4 CONTRADICTION → GENUINE_CONTESTED；
+    independence/cluster signal missing or malformed → **failed**（硬红线：Unknown ≠ Not Independent，
+    绝不把 missing 当同源；不重新聚类/不重算 independence）。
+  - claim register 派生（不落表）：precedence genuine > detail > same_origin > verified_consistent；
+    无 SUPPORTS → unverified；任一 confirmed conflict 缺 complete reconciliation / corroboration /
+    required input → incomplete_input（不静默降级）；verified_consistent 需 ≥1 SUPPORTS + 无更高冲突
+    状态 + inputs 可解析（不得仅因"无 contradiction"）。
+  - run_unresolved 只返回 register=genuine_contested 的 claims + 对应 confirmed conflicts；
+    不含 DETAIL/SAME_ORIGIN。
+  - optional LLM review 默认 OFF（Fake reviewer 测试；real 须 VERIFY_REAL_LLM=1，不进自动化 Gate）；
+    reviewer 最多产出 rationale/detail/metadata，**不得改变 outcome 语义族**（rev1 的
+    UNRESOLVABLE_SEMANTIC 已删除）；review 失败 → complete + metadata.review_failed。
+  - 失败/幂等沿用 F5 纪律：deterministic 失败 → failed + error；complete 复用；failed 重算 UPDATE 同行。
+- **Alternatives**: B=Evidence-driven Research Control（G2，需 claim 物化 + Runtime/Control 边界 → F7 候选）；
+  C=Synthesis/Claim Graph（拒）；D=Quality（拒，authority 红线）。
+- **Rejected Alternatives**: winner/truth/reliability/authority；UNRESOLVABLE_SEMANTIC（rev1→rev2 删除）；
+  修改 F3 verdict / F4 conflict / claim 内容；新 Agent/Runtime/基础设施。
+- **Consequences**: contested claim 的证据状态可解释、可审计、幂等；run unresolved 成为未来
+  F7 report/control 的只读契约输入；F6 仍是分析面（Data Plane），零 Runtime/Agent 改动。
+- **Constraints Created**: reconciliations 写入仅经 reconciliation 模块唯一写路径；F6 不写 F1–F5 表；
+  review 不得改变 outcome；register/run_unresolved 派生只读。
+- **Related Problems**: 无新增
+- **Related Architecture**: ARCHITECTURE.md §2/§3（app/research 扩展）、F6 spec rev2
+- **验证（锁定隔离环境 + 真实 PG，2026-09-12 Implementation 实测）**：F6 sqlite 21 passed + PG 4 passed；
+  全仓 sqlite-only **401 passed, 30 skipped**；双 DSN **430 passed, 1 skipped**（连跑稳定）；ruff/compileall 绿
+  （format 仅历史 3 drift 未改）。
+
+## D017 — F7 Research State Bridge（Claim Materialization + F2–F6 orchestration；首个真实 run 消费点）
+
+- **Status**: Accepted（F7 Spec rev2 Final Gate PASS → Implementation 完成，待 F7 Final Gate）
+- **Context**: 审计确认 F1 runtime-consumed 但 F2–F6 在真实 run 中零调用、claims 零产出（producer 断流）；
+  F2 spec §12.2 finalizer / §12.4 report integration 原为"设计契约不实现"。Spec rev2 定位：
+  **F7 = orchestration layer（Research State Bridge），不重实现 F3/F4/F5/F6 算法；不做 F8 Control；不改 Agent-visible context。**
+- **Decision**:
+  - 新增 `app/research/bridge.py`（finalize_run / build_run_research_state / get_run_research_state /
+    run_finalization_history）+ `app/research/extractor.py`（BaseExtractor/FakeExtractor/RealLLMExtractor
+    + candidates schema 校验；**无 verdict 键，verdict 仅 F3 可产生**）；F7 不新增 migration/表。
+  - 唯一 Runtime 接线点：`main_agent.run_deep_agent` astream 正常结束后、task_result 前 fail-open 调
+    `finalize_run`；取消/异常路径不执行。
+  - materialization：statement/type 结构非法 → 该 candidate 不入库（唯一被拒通道）；anchor 缺失/非法 →
+    claim 仍落库 + metadata.unanchored=true（不建 ClaimEvidence/Citation，F3 无该 claim verification）；
+    quote 须为 content 连续子串（否则 anchor 无效，不静默改写）；cap：claims=12 / bindings=8。
+  - orchestration：F2 structural（validate + apply_validation_outcome）必须执行；F3/F4/F5/F6 仅 enabled
+    时调既有 public API，disabled → skipped_off、不伪造 artifact、相关计数 not_computed/null。
+  - finalization identity：sha256({extractor_spec, stages:{f3..f6 spec}, final_content_hash,
+    evidence_universe_hash})；同代复用；改 content / evidence universe → 新 generation（旧 artifacts 不删）；
+    artifact 级幂等沿用 F2–F6 既有契约。
+  - fail-open：extractor/stage/store 失败只记日志、不阻断 task_result；research_runs.metadata 只写
+    `research_finalizations` 键（registry/F1 语义不变）。
+- **Alternatives**: B=Evidence-driven Research Control（依赖 claims 物化 + Runtime 决策 → F8 候选）；
+  C=State→Agent Context（无 state 可注入）；D=Control Boundary（纪律）。均因 audit 断流结论后置。
+- **Rejected Alternatives**: 重新实现验证/冲突/聚类/reconciliation；为 F7 新增 Agent/工具/infra；改 F1–F6
+  migration/公共 API 语义；把 skipped 当 verified/no-conflict/reconciled；Agent-visible context 注入。
+- **Consequences**: 真实 run 首次物化 claims 并首次被 F2–F6 orchestrate；run-level research state 可查询
+  （verified/contested/unresolved/claims 计数 + pipeline 状态），成为 F8 control 的只读输入契约；
+  语义边界（extractor 不判支持、verdict 仅 F3）与 identity 幂等被测试锁定。
+- **Constraints Created**: bridge 只调 F2–F6 公共 API（AC-Orch）；finalizations 只写 metadata 单键；
+  不改 Agent-visible context / monitor / checkpoint / tool。
+- **Related Problems**: 无新增
+- **Related Architecture**: ARCHITECTURE.md §2/§3、F7 spec rev2
+- **验证（锁定隔离环境 + 真实 PG，2026-09-12）**：F7 sqlite 19 passed + PG 4 passed；全仓 sqlite-only
+  **420 passed, 34 skipped**；双 DSN **453 passed, 1 skipped**（连跑稳定）；ruff/compileall 绿；
+  real-LLM extractor 受控 probe 执行（配置存在、endpoint 可达；.env key 401 → 部署环境需有效 key）。

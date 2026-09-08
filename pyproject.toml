@@ -15,6 +15,13 @@ dependencies = [
     # R2: SqliteSaver 运行时依赖（app/runtime/checkpoint.py）；版本 3.0.3 与锁定
     # langgraph 1.1.10 / langgraph-checkpoint 4.0.3 匹配；勿与其他 LangGraph 依赖一起升级
     "langgraph-checkpoint-sqlite==3.0.3",
+    # PG checkpoint 迁移（2026-09）：langgraph-checkpoint-postgres 3.0.5 兼容锁定
+    # checkpoint 4.0.3（3.1.x 需 checkpoint>=4.1.0，勿升）；psycopg 3 + pool 供
+    # AsyncPostgresSaver；aiosqlite 从“传递依赖”提升为直接依赖（app 直接 import）
+    "langgraph-checkpoint-postgres==3.0.5",
+    "psycopg[binary]>=3.2",
+    "psycopg-pool>=3.2",
+    "aiosqlite>=0.20",
     "markdown>=3.5",
     "mysql-connector-python>=8.0.0",
     "openai>=1.0.0",

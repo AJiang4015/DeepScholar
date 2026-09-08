@@ -35,6 +35,7 @@ function createTurn(content: string): ChatTurn {
     files: [],
     isRunning: true,
     result: "",
+    taskStatus: null,
     timestamp: new Date().toISOString()
   };
 }
@@ -54,17 +55,31 @@ export default function App() {
       }
 
       const latestTurn = previous[previous.length - 1];
+      const sessionStatus = session.taskStatus
+        ? {
+            status: session.taskStatus.status,
+            error: session.taskStatus.error ?? null,
+            terminalReason: session.taskStatus.terminal_reason ?? null
+          }
+        : null;
       const nextLatestTurn = {
         ...latestTurn,
         events: session.events,
         files: session.files,
         isRunning: session.isRunning,
-        result: session.result
+        result: session.result,
+        taskStatus: sessionStatus
       };
 
       return [...previous.slice(0, -1), nextLatestTurn];
     });
-  }, [session.events, session.files, session.isRunning, session.result]);
+  }, [
+    session.events,
+    session.files,
+    session.isRunning,
+    session.result,
+    session.taskStatus
+  ]);
 
   useEffect(() => {
     const streamNode = streamRef.current;

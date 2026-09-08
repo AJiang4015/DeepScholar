@@ -1,5 +1,11 @@
 import { API_BASE_URL } from "./config";
-import type { CancelTaskResponse, FileListResponse, TaskResponse, UploadResponse } from "../types";
+import type {
+  CancelTaskResponse,
+  FileListResponse,
+  TaskInfo,
+  TaskResponse,
+  UploadResponse
+} from "../types";
 
 function apiUrl(path: string): string {
   return `${API_BASE_URL}${path}`;
@@ -40,6 +46,12 @@ export async function cancelTask(threadId: string): Promise<CancelTaskResponse> 
   return requestJson<CancelTaskResponse>(apiUrl(`/api/task/${encodeURIComponent(threadId)}/cancel`), {
     method: "POST"
   });
+}
+
+/** 治理任务详情（GET /api/tasks/{task_id}）：
+ *  重连/刷新后校正任务终态（completed/failed/cancelled/timed_out/budget_exceeded/…）。 */
+export async function getTask(taskId: string): Promise<TaskInfo> {
+  return requestJson<TaskInfo>(apiUrl(`/api/tasks/${encodeURIComponent(taskId)}`));
 }
 
 export async function uploadSessionFiles(

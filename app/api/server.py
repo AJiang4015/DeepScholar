@@ -25,8 +25,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from app.agent.main_agent import run_deep_agent
 from app.api.monitor import manager
+from app.runtime.checkpoint import (
+    init_checkpoint_lifespan,
+    shutdown_checkpoint_lifespan,
+)
+from app.runtime.governance import service as gov_service
+from app.runtime.governance.controller import (
+    GovernanceController,
+    get_controller as get_governance_controller,
+)
 from app.utils.session_id import (
     InvalidThreadIdError,
     safe_thread_id_or_new,
@@ -44,18 +52,33 @@ from app.utils.upload_guard import (
     validate_size,
 )
 
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     """
     服务生命周期入口。
 
-    启动时绑定当前事件循环到 WebSocket 管理器，确保后台 Agent 任务可以把
-    monitor 事件投递回 FastAPI 所在的 loop。
+    1. 绑定当前事件循环到 WebSocket 管理器，确保后台 Agent 任务可以把
+       monitor 事件投递回 FastAPI 所在的 loop。
+    2. 初始化 checkpoint 后端（postgres：创建 AsyncConnectionPool 并注入；
+       sqlite：无操作，由 prewarm 创建）——失败即启动失败（fail-fast）。
+    3. 启动期 prewarm：创建后端 checkpointer 并 lazy 组装主智能体（官方
+       AsyncSaver 必须在 running loop 内创建），保持 R2 的“启动即可发现 DB
+       不可用”语义，并避免首个请求承担初始化延迟。
     """
     loop = asyncio.get_running_loop()
     manager.set_loop(loop)
     print(f"[Server] WebSocket Manager bound to loop: {id(loop)}")
+
+    await init_checkpoint_lifespan()
+    # prewarm：get_main_agent 内部 await get_checkpointer() → setup() 建表/迁移
+    from app.agent.main_agent import get_main_agent
+
+    await get_main_agent()
+    print("[Server] Checkpoint backend ready (main agent assembled lazily)")
     yield
+    await shutdown_checkpoint_lifespan()
+    print("[Server] Checkpoint resources released")
 
 
 # 当前文件位于 app/api/server.py，运行时目录统一收敛到 app 目录
@@ -66,6 +89,34 @@ app = FastAPI(title="DeepAgents API", lifespan=lifespan)
 
 # 保存 thread_id -> 后台 Agent 任务，用于同一会话任务替换和主动取消
 active_tasks: dict[str, asyncio.Task] = {}
+# Step 4 Batch 1：thread_id -> 当前 governed TaskRecord.task_id（server 不直接写 TaskRecord）
+_task_registry: dict[str, str] = {}
+
+
+def _governance_terminal_sink(frame: dict) -> None:
+    """governance_terminal live bridge → 现有 per-thread WS manager（observation，fail-open）。"""
+    thread_id = frame.get("thread_id")
+    if not thread_id:
+        return
+    try:
+        manager.enqueue(frame, thread_id)
+    except Exception as exc:  # noqa: BLE001 — bridge 失败不影响 control/lifecycle
+        print(
+            f"[GovernanceBridge] live sink 失败（thread {thread_id}，fail-open）：{exc}"
+        )
+
+
+def _require_governance() -> GovernanceController:
+    """governance controller（store 不可用 → fail-closed 拒绝受理，M-Spec c1）。"""
+    ctl = get_governance_controller()
+    if ctl is None:
+        raise HTTPException(
+            status_code=503, detail="governance store 不可用，拒绝受理（fail-closed）"
+        )
+    if ctl.live_sink is None:  # 最小 DI：复用现有 manager，不新建 event bus
+        ctl.live_sink = _governance_terminal_sink
+    return ctl
+
 
 # output 保存每个会话最终工作区，前端只允许从这里浏览和下载生成文件
 output_dir = project_root / "output"
@@ -90,6 +141,9 @@ class TaskRequest(BaseModel):
 
     query: str
     thread_id: str = None
+    #: Step 4 Batch 1（可选）：治理 policy（max_llm_calls / wall_clock_timeout 等），
+    #: 缺省由 governance 服务默认（M-Spec §7.4）。服务端仍可钳制（后续 API Step）。
+    policy: dict = None
 
 
 def _forget_task(thread_id: str, task: asyncio.Task) -> None:
@@ -103,44 +157,92 @@ def _forget_task(thread_id: str, task: asyncio.Task) -> None:
         active_tasks.pop(thread_id, None)
 
 
+def _forget_governed_task(thread_id: str, task_id: str, task: asyncio.Task) -> None:
+    """清理 governed 登记：只有 registry 仍指向本 task 时才移除（防止旧任务回调误删新任务）。"""
+    _forget_task(thread_id, task)
+    if _task_registry.get(thread_id) == task_id:
+        _task_registry.pop(thread_id, None)
+
+
 @app.post("/api/task")
 async def run_task(request: TaskRequest):
     """
-    启动一次 DeepAgents 后台任务。
+    启动一次 DeepAgents 后台任务（governed：TaskRecord + Controller.execute(policy)）。
 
-    HTTP 请求只负责创建后台协程并立即返回，后续执行轨迹、子智能体调用和最终
-    答案都会由 monitor 通过 `/ws/{thread_id}` 推送给同一会话的前端。
+    HTTP 请求只负责创建 TaskRecord、登记后台任务并立即返回；后续执行轨迹、子智能体
+    调用和最终结果仍由 monitor 通过 `/ws/{thread_id}` 推送（live），terminal 状态与
+    lifecycle event 由 governance（durable）记录。governance store 不可用 → 503 拒绝受理。
     """
     # thread_id 净化：非法/缺失时服务端生成新 uuid（前端接受响应中的 thread_id）
     thread_id = safe_thread_id_or_new(request.thread_id)
 
-    # 同一个 thread_id 只保留一个活跃任务，新任务会先取消旧任务，避免并发写同一会话目录
+    # 同一 thread_id 只保留一个活跃任务：先收敛旧任务（治理任务走冻结 funnel），
+    # 再启动新任务，避免并发写同一会话目录。（AC2 正式 superseded 语义留后续 API Step）
     old_task = active_tasks.get(thread_id)
     if old_task and not old_task.done():
         old_task.cancel()
+    ctl = _require_governance()
+    old_task_id = _task_registry.get(thread_id)
+    if old_task_id:
+        try:
+            await ctl.cancel_governed(old_task_id)
+        except Exception:  # noqa: BLE001 — 旧任务收敛尽力而为
+            pass
 
-    # create_task 把长耗时 Agent 执行交给事件循环，接口本身不用等待最终结果
-    task = asyncio.create_task(run_deep_agent(request.query, thread_id))
+    record, task = gov_service.submit_task(
+        ctl, thread_id=thread_id, query=request.query, policy=request.policy
+    )
+    _task_registry[thread_id] = record.task_id
     active_tasks[thread_id] = task
-    task.add_done_callback(lambda finished_task: _forget_task(thread_id, finished_task))
+    task.add_done_callback(
+        lambda t: _forget_governed_task(thread_id, record.task_id, t)
+    )
 
-    return {"status": "started", "thread_id": thread_id}
+    return {
+        "status": "started",
+        "thread_id": thread_id,
+        "task_id": record.task_id,
+        "run_id": record.run_id,
+    }
 
 
 @app.post("/api/task/{thread_id}/cancel")
 async def cancel_task(thread_id: str):
     """
-    取消指定 thread_id 对应的后台 Agent 任务。
+    取消指定 thread_id 对应的后台 Agent 任务（governed：冻结 Controller funnel + lifecycle event）。
 
-    注意：取消会向 asyncio.Task 注入 CancelledError。若底层第三方工具正在执行不可中断
-    的同步阻塞调用，任务可能需要等该调用返回后才会真正结束。
+    注意：取消先收敛 TaskRecord（cancelled），再向 asyncio.Task 注入 CancelledError。若底层
+    第三方工具正在执行不可中断的同步阻塞调用，任务可能需要等该调用返回后才会真正结束
+    （TaskRecord terminal ≠ 底层已停；linger 观察字段记录）。
     """
     task = active_tasks.get(thread_id)
+    gov_task_id = _task_registry.get(thread_id)
+
+    if gov_task_id is not None:
+        ctl = _require_governance()
+        try:
+            res = await gov_service.cancel_task(ctl, gov_task_id)
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(
+                status_code=500, detail=f"governance cancel 失败：{e}"
+            ) from e
+        if task and not task.done():
+            task.cancel()
+        if not task or task.done():
+            active_tasks.pop(thread_id, None)
+        return {
+            "status": res.get("status") or "cancelled",
+            "thread_id": thread_id,
+            "task_id": gov_task_id,
+            "already_terminal": res.get("already_terminal", False),
+        }
+
+    # 兼容旧（非 governed）任务
     if not task or task.done():
         active_tasks.pop(thread_id, None)
         raise HTTPException(status_code=404, detail="任务不存在或已结束")
-
-    # 先发出取消信号，再短暂等待协程响应；若底层阻塞中，则返回 cancelling 给前端继续展示状态
     task.cancel()
     try:
         await asyncio.wait_for(task, timeout=1.0)
@@ -152,9 +254,71 @@ async def cancel_task(thread_id: str):
     except Exception as e:
         _forget_task(thread_id, task)
         return {"status": "cancelled", "thread_id": thread_id, "message": str(e)}
-
     _forget_task(thread_id, task)
     return {"status": "cancelled", "thread_id": thread_id}
+
+
+@app.get("/api/tasks")
+async def list_tasks_api(thread_id: str = None):
+    """任务列表（只读；可选 thread 过滤；created_at 降序）。"""
+    ctl = _require_governance()
+    records = gov_service.list_tasks(ctl, thread_id=thread_id)
+    return {"tasks": [gov_service.task_dict(r) for r in records]}
+
+
+@app.get("/api/tasks/{task_id}")
+async def get_task_api(task_id: str):
+    """任务详情（terminal reason / counters / policy 等）。"""
+    ctl = _require_governance()
+    record = gov_service.get_task(ctl, task_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return gov_service.task_dict(record)
+
+
+# ---------------------------------------------------------------------------
+# Batch 2：durable event replay（cursor = (task_id, governance_seq)，只读）
+# ---------------------------------------------------------------------------
+def _resolve_replay_task(thread_id: str, task_id: str):
+    """解析 replay task：显式校验归属；缺省 → 当前 thread 的 active governed task。
+
+    返回 (task_id or None, error_or_None)。
+    """
+    ctl = _require_governance()
+    if task_id:
+        rec = gov_service.get_task(ctl, task_id)
+        if rec is None:
+            return None, ("not_found", "任务不存在")
+        if rec.thread_id != thread_id:
+            return None, ("not_in_thread", "任务不属于该 thread")
+        return rec.task_id, None
+    active = _task_registry.get(thread_id)
+    if active is None:
+        return None, ("no_active", "task_id 未提供且当前 thread 无活跃 governed 任务")
+    return active, None
+
+
+@app.get("/api/threads/{thread_id}/events")
+async def replay_events_api(
+    thread_id: str, task_id: str = None, since_seq: int = 0, limit: int = 200
+):
+    """task-scoped durable event replay（governance_seq 升序；event_id 客户端去重）。"""
+    resolved, err = _resolve_replay_task(thread_id, task_id)
+    if err:
+        code, msg = err
+        status = 404 if code in ("not_found", "not_in_thread") else 400
+        raise HTTPException(status_code=status, detail=msg)
+    from app.runtime.governance import events as gov_events
+
+    ctl = _require_governance()
+    result = gov_events.replay_events(
+        ctl._store,  # noqa: SLF001
+        thread_id=thread_id,
+        task_id=resolved,
+        since_seq=since_seq,
+        limit=limit,
+    )
+    return {"task_id": resolved, **result}
 
 
 @app.post("/api/upload")
@@ -213,9 +377,7 @@ async def upload_files(files: List[UploadFile] = File(...), thread_id: str = For
                     try:
                         validate_size(size)
                     except UploadRejectedError as exc:
-                        raise HTTPException(
-                            status_code=413, detail=str(exc)
-                        ) from exc
+                        raise HTTPException(status_code=413, detail=str(exc)) from exc
                     buffer.write(chunk)
         except Exception:
             # 任一步失败都清理半写文件，避免残留
@@ -341,6 +503,49 @@ async def websocket_endpoint(websocket: WebSocket, thread_id: str):
 
     # 连接建立后立即按 thread_id 注册，monitor 后续才能把事件定向推给当前页面
     await manager.connect(websocket, safe_thread_id)
+
+    # Batch 2：握手可选 since_seq（cursor=(task_id, governance_seq)）→ 先 durable replay 再转 live。
+    # live payload 契约不变（R3 envelope/monitor_seq）；durable 帧单独 type=governance_replay。
+    qp = websocket.query_params
+    query_task_id = qp.get("task_id") or None
+    try:
+        query_since = int(qp.get("since_seq") or "0")
+    except ValueError:
+        query_since = 0
+    try:
+        resolved, err = _resolve_replay_task(safe_thread_id, query_task_id)
+        if err:
+            code, msg = err
+            await websocket.send_json(
+                {"type": "governance_error", "code": code, "detail": msg}
+            )
+            if code in ("not_found", "not_in_thread"):
+                await websocket.close(code=1008)
+                return
+            # no_active：发错误帧后空回放，继续 live
+        else:
+            from app.runtime.governance import events as gov_events
+
+            ctl = _require_governance()
+            result = gov_events.replay_events(
+                ctl._store,  # noqa: SLF001
+                thread_id=safe_thread_id,
+                task_id=resolved,
+                since_seq=query_since,
+                limit=200,
+            )
+            for ev in result["events"]:
+                await websocket.send_json({"type": "governance_replay", "event": ev})
+            await websocket.send_json(
+                {
+                    "type": "governance_replay_end",
+                    "task_id": resolved,
+                    "next_seq": result["next_seq"],
+                    "gap": result["gap"],
+                }
+            )
+    except Exception as e:  # noqa: BLE001 — replay 失败不阻断 live
+        print(f"[WebSocket] 握手 replay 失败（thread {safe_thread_id}）：{e}")
 
     try:
         while True:

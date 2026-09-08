@@ -60,6 +60,24 @@ def reset_run_context(token: Token[Optional[str]]) -> None:
     _run_id_ctx.reset(token)
 
 
+# Batch 3（C）：task_id 作 additive correlation 字段 —— 来源为 governance execution context；
+# bare（非 governed）执行恒为 None。不改变 thread_id/run_id/monitor_seq。
+_task_id_ctx: ContextVar[Optional[str]] = ContextVar("task_id", default=None)
+
+
+def set_task_context(task_id: Optional[str]) -> Token[Optional[str]]:
+    """设置当前 execution 的 governance task_id（governed 时来自 GovernanceExecution.task_id）。"""
+    return _task_id_ctx.set(task_id)
+
+
+def get_task_context() -> Optional[str]:
+    return _task_id_ctx.get()
+
+
+def reset_task_context(token: Token[Optional[str]]) -> None:
+    _task_id_ctx.reset(token)
+
+
 # ---------------------------------------------------------------------------
 # run 级终态一次性守卫（纯逻辑，可单测）
 # ---------------------------------------------------------------------------
@@ -139,6 +157,7 @@ class ToolMonitor:
             "event_id": uuid.uuid4().hex,
             "run_id": run_id or "",
             "thread_id": thread_id or "",
+            "task_id": _task_id_ctx.get(),  # additive：governed 时=TaskRecord.task_id，bare=None
             "seq": seq,
             "message": message,
             "data": data or {},
@@ -192,9 +211,7 @@ class ToolMonitor:
 
     def report_task_started(self, query: str) -> dict[str, Any]:
         """报告任务开始（R3 新增：task 生命周期起点）"""
-        return self._emit(
-            "task_started", "任务开始执行", {"query": query}
-        )
+        return self._emit("task_started", "任务开始执行", {"query": query})
 
     def report_task_result(self, result: str) -> dict[str, Any]:
         """报告任务最终结果（run 级一次性终态，配合 RunTerminalGuard 使用）"""

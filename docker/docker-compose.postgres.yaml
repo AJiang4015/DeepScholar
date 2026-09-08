@@ -1,0 +1,39 @@
+# PostgreSQL 开发/测试服务（PostgreSQL Checkpoint Migration 配套，2026-09）
+# 用途：仅为本地开发 / 测试环境提供 PG 实例以执行 checkpoint migration 验证协议
+# P1–P7 与 PG integration/replay/recovery 测试。**不扩展生产部署架构**。
+#
+# 启动：docker compose -f docker/docker-compose.postgres.yaml up -d
+# 停止：docker compose -f docker/docker-compose.postgres.yaml down
+#
+# 连接参数（默认，与 .env.example 对齐）：
+#   host=localhost port=5433 user=deepsearch password=deepsearch dbname=deepsearch
+#   AGENT_CHECKPOINT_DSN=postgresql://deepsearch:deepsearch@localhost:5433/deepsearch
+#   AGENT_CHECKPOINT_DSN_TEST=postgresql://deepsearch:deepsearch@localhost:5433/deepsearch_test
+# 映射 5433 避免与本机既有 5432 冲突（与 docker/mysql 的 3307 同理）。
+#
+# 测试库准备（首次）：
+#   docker compose -f docker/docker-compose.postgres.yaml exec -T postgres \
+#     psql -U deepsearch -d deepsearch -c "CREATE DATABASE deepsearch_test OWNER deepsearch;"
+#
+# 注意：测试只允许针对独立测试库（AGENT_CHECKPOINT_DSN_TEST），禁止指向开发/生产库。
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: deepsearch-pg-checkpoint
+    environment:
+      POSTGRES_USER: deepsearch
+      POSTGRES_PASSWORD: deepsearch
+      POSTGRES_DB: deepsearch
+    ports:
+      - "5433:5432"
+    volumes:
+      - deepsearch_pg_checkpoint_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U deepsearch -d deepsearch"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  deepsearch_pg_checkpoint_data:
