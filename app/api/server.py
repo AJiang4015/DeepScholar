@@ -35,6 +35,7 @@ from app.runtime.governance.controller import (
     GovernanceController,
     get_controller as get_governance_controller,
 )
+from app.session import service as session_service
 from app.utils.session_id import (
     InvalidThreadIdError,
     safe_thread_id_or_new,
@@ -146,6 +147,32 @@ class TaskRequest(BaseModel):
     policy: dict = None
 
 
+class SessionCreateRequest(BaseModel):
+    """创建 Session 请求体（Decision Closure #4：#1 session_id == thread_id）。
+
+    - thread_id 缺省 → 服务端生成安全 uuid（session_id = thread_id）；
+    - thread_id 提供 → 既有历史 Thread 注册（session_id = provided thread_id）；
+    - 不得出现 session_id != thread_id。
+    """
+
+    title: str = None
+    description: str = None
+    thread_id: str = None
+
+
+class SessionRestoreRequest(BaseModel):
+    """PATCH /api/sessions/{id} 请求体（v1 仅支持 unarchive：status="active"）。"""
+
+    status: str = "active"
+
+
+class SessionTaskCreateRequest(BaseModel):
+    """session-scoped 研究任务创建请求体（语义同 TaskRequest，thread_id = session_id）。"""
+
+    query: str
+    policy: dict = None
+
+
 def _forget_task(thread_id: str, task: asyncio.Task) -> None:
     """
     清理已结束任务的登记关系。
@@ -164,6 +191,91 @@ def _forget_governed_task(thread_id: str, task_id: str, task: asyncio.Task) -> N
         _task_registry.pop(thread_id, None)
 
 
+async def _start_governed_task(
+    ctl: GovernanceController,
+    *,
+    thread_id: str,
+    query: str,
+    policy: dict = None,
+    precondition: object = None,
+) -> tuple[object, asyncio.Task]:
+    """同 thread 单活跃收敛 + governed 提交 + server 登记（POST /api/task 与 session-scoped 共用）。
+
+    语义与既有 run_task 完全一致：同一 thread_id 只保留一个活跃任务（先收敛旧任务——
+    治理任务走冻结 cancel funnel；再启动新任务），避免并发写同一会话目录。
+
+    precondition：可调用对象，在收敛旧任务（可能 await、让出事件循环）**之后、真正 submit 之前**
+    同步执行 —— 供 session 场景在「归档 / 建任务」并发窗口内二次校验 Session 仍 active
+    （Submit 前最后一个同步点，不再让出）。
+    """
+    old_task = active_tasks.get(thread_id)
+    if old_task and not old_task.done():
+        old_task.cancel()
+    old_task_id = _task_registry.get(thread_id)
+    if old_task_id:
+        try:
+            await ctl.cancel_governed(old_task_id)
+        except Exception:  # noqa: BLE001 — 旧任务收敛尽力而为
+            pass
+    if precondition is not None:
+        precondition()
+    record, task = gov_service.submit_task(
+        ctl, thread_id=thread_id, query=query, policy=policy
+    )
+    _task_registry[thread_id] = record.task_id
+    active_tasks[thread_id] = task
+    task.add_done_callback(
+        lambda t: _forget_governed_task(thread_id, record.task_id, t)
+    )
+    return record, task
+
+
+async def _cancel_governed_task(
+    ctl: GovernanceController, thread_id: str, gov_task_id: str
+) -> dict:
+    """governed cancel（冻结 funnel + lifecycle event）+ server 登记收敛。
+
+    语义与既有 /api/task/{thread_id}/cancel 的 governed 分支一致（共享实现，防止漂移）。
+    """
+    task = active_tasks.get(thread_id)
+    try:
+        res = await gov_service.cancel_task(ctl, gov_task_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"governance cancel 失败：{e}"
+        ) from e
+    if task and not task.done():
+        task.cancel()
+    if not task or task.done():
+        active_tasks.pop(thread_id, None)
+    return {
+        "status": res.get("status") or "cancelled",
+        "thread_id": thread_id,
+        "task_id": gov_task_id,
+        "already_terminal": res.get("already_terminal", False),
+    }
+
+
+def _map_session_error(exc: Exception) -> HTTPException:
+    """session 域错误 → 本项目既有错误形态（HTTPException + detail，Decision Closure #7/#14）。"""
+    if isinstance(
+        exc,
+        (
+            session_service.SessionNotFoundError,
+            session_service.TaskNotFoundError,
+            session_service.TaskNotInSessionError,
+        ),
+    ):
+        return HTTPException(status_code=404, detail=str(exc))
+    if isinstance(exc, session_service.SessionStateError):
+        return HTTPException(status_code=409, detail=str(exc))
+    if isinstance(exc, session_service.SessionValidationError):
+        return HTTPException(status_code=400, detail=str(exc))
+    return HTTPException(status_code=500, detail=f"session 服务失败：{exc}")
+
+
 @app.post("/api/task")
 async def run_task(request: TaskRequest):
     """
@@ -178,24 +290,9 @@ async def run_task(request: TaskRequest):
 
     # 同一 thread_id 只保留一个活跃任务：先收敛旧任务（治理任务走冻结 funnel），
     # 再启动新任务，避免并发写同一会话目录。（AC2 正式 superseded 语义留后续 API Step）
-    old_task = active_tasks.get(thread_id)
-    if old_task and not old_task.done():
-        old_task.cancel()
     ctl = _require_governance()
-    old_task_id = _task_registry.get(thread_id)
-    if old_task_id:
-        try:
-            await ctl.cancel_governed(old_task_id)
-        except Exception:  # noqa: BLE001 — 旧任务收敛尽力而为
-            pass
-
-    record, task = gov_service.submit_task(
+    record, task = await _start_governed_task(
         ctl, thread_id=thread_id, query=request.query, policy=request.policy
-    )
-    _task_registry[thread_id] = record.task_id
-    active_tasks[thread_id] = task
-    task.add_done_callback(
-        lambda t: _forget_governed_task(thread_id, record.task_id, t)
     )
 
     return {
@@ -220,24 +317,7 @@ async def cancel_task(thread_id: str):
 
     if gov_task_id is not None:
         ctl = _require_governance()
-        try:
-            res = await gov_service.cancel_task(ctl, gov_task_id)
-        except HTTPException:
-            raise
-        except Exception as e:
-            raise HTTPException(
-                status_code=500, detail=f"governance cancel 失败：{e}"
-            ) from e
-        if task and not task.done():
-            task.cancel()
-        if not task or task.done():
-            active_tasks.pop(thread_id, None)
-        return {
-            "status": res.get("status") or "cancelled",
-            "thread_id": thread_id,
-            "task_id": gov_task_id,
-            "already_terminal": res.get("already_terminal", False),
-        }
+        return await _cancel_governed_task(ctl, thread_id, gov_task_id)
 
     # 兼容旧（非 governed）任务
     if not task or task.done():
@@ -274,6 +354,142 @@ async def get_task_api(task_id: str):
     if record is None:
         raise HTTPException(status_code=404, detail="任务不存在")
     return gov_service.task_dict(record)
+
+
+# ---------------------------------------------------------------------------
+# Multi-Session（Decision Closure）：/api/sessions —— additive，既有端点语义不变。
+# Session 容器：session_id == thread_id（1:1）；归属 = governance_tasks.thread_id。
+# 隔离：所有 Session-scoped 操作先验证 session 存在 → 状态合法 → task 归属，否则拒绝。
+# ---------------------------------------------------------------------------
+@app.post("/api/sessions", status_code=201)
+async def create_session_api(request: SessionCreateRequest):
+    """创建 Session（默认 ACTIVE；Decision Closure #4）。
+
+    thread_id 缺省 → 服务端生成安全 uuid；提供 → 注册既有历史 Thread。
+    不得出现 session_id != thread_id。
+    """
+    ctl = _require_governance()
+    try:
+        sess = session_service.create_session(
+            ctl,
+            title=request.title,
+            description=request.description,
+            thread_id=request.thread_id,
+        )
+    except Exception as exc:  # noqa: BLE001 — 统一映射 session 域错误
+        raise _map_session_error(exc) from exc
+    return sess.to_dict()
+
+
+@app.get("/api/sessions")
+async def list_sessions_api(
+    include_archived: bool = False,
+    limit: int = session_service.DEFAULT_LIST_LIMIT,
+    offset: int = 0,
+):
+    """Session 列表（缺省只返回 active；含 task_count/running_tasks/latest_task）。"""
+    ctl = _require_governance()
+    try:
+        return session_service.list_sessions(
+            ctl,
+            include_archived=include_archived,
+            limit=limit,
+            offset=offset,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise _map_session_error(exc) from exc
+
+
+@app.get("/api/sessions/{session_id}")
+async def get_session_api(session_id: str):
+    """Session Detail = 元数据 + Session Tasks + 最新执行信息（archived 仍可读）。"""
+    ctl = _require_governance()
+    try:
+        return session_service.get_session_detail(ctl, session_id)
+    except Exception as exc:  # noqa: BLE001
+        raise _map_session_error(exc) from exc
+
+
+@app.delete("/api/sessions/{session_id}")
+async def archive_session_api(session_id: str):
+    """逻辑归档 ACTIVE → ARCHIVED（幂等；有 running Task → 409；不物理删除任何历史）。"""
+    ctl = _require_governance()
+    try:
+        return session_service.archive_session(ctl, session_id)
+    except Exception as exc:  # noqa: BLE001
+        raise _map_session_error(exc) from exc
+
+
+@app.patch("/api/sessions/{session_id}")
+async def restore_session_api(session_id: str, request: SessionRestoreRequest):
+    """v1 状态转换端点：仅支持 unarchive（status="active"；幂等）。"""
+    if request.status != "active":
+        raise HTTPException(
+            status_code=400,
+            detail="v1 仅支持恢复操作：PATCH body.status 必须为 'active'（unarchive）",
+        )
+    ctl = _require_governance()
+    try:
+        return session_service.unarchive_session(ctl, session_id)
+    except Exception as exc:  # noqa: BLE001
+        raise _map_session_error(exc) from exc
+
+
+@app.post("/api/sessions/{session_id}/tasks", status_code=201)
+async def create_session_task_api(session_id: str, request: SessionTaskCreateRequest):
+    """在 Session 内创建研究任务（thread_id = session_id；复用既有 governed 运行链路）。
+
+    前置：Session 存在 + ACTIVE（archived → 409）；同 thread 单活跃收敛语义与
+    POST /api/task 一致（共享 _start_governed_task）。
+    """
+    ctl = _require_governance()
+    try:
+        session_service.assert_session_active(ctl, session_id)
+
+        # 归档守卫并发窗口二次校验：submit 前（收敛旧任务让出事件循环之后）再确认仍 active
+        def _recheck_active() -> None:
+            session_service.assert_session_active(ctl, session_id)
+
+        record, task = await _start_governed_task(
+            ctl,
+            thread_id=session_id,
+            query=request.query,
+            policy=request.policy,
+            precondition=_recheck_active,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise _map_session_error(exc) from exc
+    return {
+        "status": "started",
+        "thread_id": session_id,
+        "task_id": record.task_id,
+        "run_id": record.run_id,
+    }
+
+
+@app.get("/api/sessions/{session_id}/tasks")
+async def list_session_tasks_api(session_id: str):
+    """Session 下的 Task 列表（thread 作用域；archived 仍可读；query 可选 enrich）。"""
+    ctl = _require_governance()
+    try:
+        tasks = session_service.list_session_tasks(ctl, session_id)
+    except Exception as exc:  # noqa: BLE001
+        raise _map_session_error(exc) from exc
+    return {"session_id": session_id, "tasks": tasks}
+
+
+@app.post("/api/sessions/{session_id}/tasks/{task_id}/cancel")
+async def cancel_session_task_api(session_id: str, task_id: str):
+    """Session-scoped 取消：先验证归属（task.thread_id == session_id），再走冻结 funnel。
+
+    Session A 无法 cancel Session B 的 Task（隔离，Decision Closure #7）。
+    """
+    ctl = _require_governance()
+    try:
+        session_service.validate_task_in_session(ctl, session_id, task_id)
+    except Exception as exc:  # noqa: BLE001
+        raise _map_session_error(exc) from exc
+    return await _cancel_governed_task(ctl, session_id, task_id)
 
 
 # ---------------------------------------------------------------------------

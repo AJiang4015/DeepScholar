@@ -86,7 +86,11 @@ class TestGovernanceStorePostgres:
         # 先确保空（表族可能残留自其它测试：幂等 ensure 即可，不做 DROP——fixture/reset 由 CI 库清场）
         gov_migrations.ensure_schema(store)
         gov_migrations.ensure_schema(store)
-        assert sorted(gov_migrations.applied_migration_versions(store)) == ["0001"]
+        # 0002_sessions 为 governance 迁移族 additive（Multi-Session；0001 语义零改动）
+        assert sorted(gov_migrations.applied_migration_versions(store)) == [
+            "0001",
+            "0002",
+        ]
         store.close()
 
     def test_schema_columns_types_indexes(self):

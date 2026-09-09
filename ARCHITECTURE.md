@@ -28,6 +28,7 @@
 | app/tools | LangChain 工具：网络搜索/DB 查询/RAGFlow 问答/文件读取/文档生成 | tavily_tool.py、db_tools.py、ragflow_tools.py、upload_file_read_tool.py、markdown_tools.py、pdf_tools.py |
 | app/utils | 无业务语义的通用工具：路径解析、Markdown→PDF 底层转换 | path_utils.py、word_converter.py |
 | app/runtime | Checkpoint 运行时层：backend 抽象工厂（`AGENT_CHECKPOINT_BACKEND`=sqlite(缺省,官方 AsyncSqliteSaver)/postgres(官方 AsyncPostgresSaver + AsyncConnectionPool，pool 由 server lifespan 注入)；进程级单例 + loop 亲和、官方 setup() 自管 checkpoint 表族、DB 不可用 fail-fast）；无业务语义，无 app 内依赖 | checkpoint.py |
+| app/session | Multi-Session 对话容器域（F-MultiSession；不拥有 Runtime lifecycle 权威）：Session 元数据 + 生命周期（仅 ACTIVE/ARCHIVED）+ Session↔Task 归属与隔离（session_id == thread_id，TaskRecord.thread_id 派生关联）；sessions 表族 = governance 迁移族 additive 0002；只读聚合 governance_tasks（task_count/running_tasks/latest_task）；复用 governance store/service/controller；query enrich 可选 lazy 读 research（fail-open） | app/session/models.py、store.py、service.py |
 | app/research | Research Data Plane（F1+F2）：ResearchRun/SubQuestion/SearchQuery/Source/Evidence（F1）+ Claim/ClaimEvidence/Citation 与 validator R1–R10（F2，0002）；F3 semantic verification（0003 verifications）；F4 conflict detection（0004 conflicts，pair 粒度 + genuine/type invariant）；F5 corroboration（0005 corroborations，claim 作用域 global clustering + 独立性计量，只计量不裁决）；F6 reconciliation（0006 reconciliations，conflict fact + independence signal → claim-level conflict state / contested register，解释/登记不裁决）；F7 research bridge（app/research/bridge.py + extractor.py：真实 run terminal finalization 物化 candidate claims、orchestrate F2–F6、run-level research state；main_agent 唯一接线点，fail-open；不改 Agent-visible context）；RESEARCH_STORE=sqlite(缺省)/postgres/disabled；research_* 表族版本化迁移（0001–0006，F7 无新迁移）；validator 纯只读；verification/detector/review 均 fail-open 或受控（real-LLM 须显式启用，不进自动化 Gate）；呈现编号 [n] 不落库；**不依赖 app/agent**，与 checkpoint 逻辑解耦 | research/*、db/migrations/ |
 | app/research（② Research Intelligence / Execution + eval；原 F9-P0） | 与上一条目同一目录内的**智能执行层**（非数据面）：projection（只读投影）/ gaps（确定性缺口信号）/ judge（LLM 语义判断）/ plan（validated follow-up plan + dedup）/ targeted（定向研究执行 + 增量 F3 验证）/ orchestrator（**业务研究编排**：单 F8 governed execution 内编排 round0 → Projection → Gap → Judge → Plan → Targeted → Stopping → Final Synthesis → F7 once；**不拥有 lifecycle / budget / cancellation / timeout / terminal authority** —— F8 Controller 仍唯一权威；不新建第二 Runtime/Controller/task；research_round 是编排计数）；eval/（Research Intelligence 确定性行为质量验证与校准：world/agents/harness/rubric/scenarios/calibration）。依赖边界见 §3：智能层允许依赖 app/runtime/governance（受治理 LLM/上下文契约）；默认 seam 仅 lazy import app.agent.main_agent / app.tools.tavily_tool / app.api.monitor。 | projection.py、gaps.py、judge.py、plan.py、targeted.py、orchestrator.py、eval/ |
 | app/ragflow | RAGFlow 配置加载与调用示例 | rag_config.py、knowledge_demo.py |
@@ -41,11 +42,13 @@
 
 ```text
 app/api/server        → app/agent/main_agent
+app/api/server        → app/session/service（Multi-Session 端点接线；session 域无 server 依赖）
 app/agent/main_agent  → agent/llm、agent/prompts、agent/subagents/*、tools/*、api/context、api/monitor、runtime/checkpoint、research/*
 app/agent/subagents/* → tools/*、agent/prompts
 app/tools/*           → api/context、api/monitor、utils/*、ragflow/rag_config、research/*
 app/research（Data/Evidence Plane 核心模块）→ 无 app 内依赖（stdlib + pydantic；psycopg 惰性 import）；不依赖 app/agent
 app/research（Research Intelligence/Execution + eval）→ 允许依赖 app/runtime/governance（GovernanceExecution · make_handler · counters；F8 control 信号原样传播，不吞）；默认 seam 仅 lazy import app.agent.main_agent / app.tools.tavily_tool / app.api.monitor；不拥有 Runtime governance 权威
+app/session/*         → app/runtime/governance（复用 governance service/store/controller：Task 提交/取消/列表）、app/utils/session_id（P004 字符集校验）；query enrich 仅 lazy import app.research.store（fail-open，独立只读）。app/session 不被 governance / research / agent import；不拥有任何 Runtime lifecycle 权威
 app/utils/*           → 不依赖任何 app 内模块（纯函数 + 三方库）
 app/runtime/checkpoint → 无 app 内依赖（stdlib + langgraph / langgraph-checkpoint / langgraph-checkpoint-sqlite / langgraph-checkpoint-postgres；aiosqlite/psycopg/psycopg-pool 惰性 import）
 app/api/context       → 无（contextvars 标准库）
@@ -117,6 +120,11 @@ payload 统一为 `{"type":"monitor_event","event":...,"message":...,"data":...,
 ## 6. 兼容规则（对外契约，变更需 Decision）
 
 - **HTTP 端点集合与语义**：`POST /api/task`、`POST /api/task/{id}/cancel`、`POST /api/upload`、`GET /api/files`、`GET /api/download`、`WS /ws/{thread_id}`。前端 `frontend/src/lib/api.ts`、`thread.ts`、`config.ts`（VITE_API_BASE_URL / VITE_WS_BASE_URL）、`hooks/useDeepAgentSession.ts` 依赖它们。
+- **Multi-Session 端点（additive；2026-10-03，契约 = 仓库根 MULTI_SESSION_API_SPEC.md）**：
+  `POST /api/sessions`、`GET /api/sessions`、`GET /api/sessions/{session_id}`、`DELETE /api/sessions/{session_id}`（逻辑归档）、
+  `PATCH /api/sessions/{session_id}`（v1 仅 unarchive）、`POST /api/sessions/{session_id}/tasks`、
+  `GET /api/sessions/{session_id}/tasks`、`POST /api/sessions/{session_id}/tasks/{task_id}/cancel`。
+  身份契约：session_id == thread_id（1:1）；TaskRecord.parent_session 保持 NULL/unused；旧端点与旧客户端语义不变。
 - **WS 事件 schema**：见 §4；`EventStream.tsx` 等组件依赖，MUST NOT 静默修改。
 - **WS 心跳协议**：客户端发送任意文本心跳，服务端回复 `{"type":"pong","message":...}`（server.py websocket_endpoint；前端 useDeepAgentSession.ts 约每 25s 发送）。修改心跳协议必须同步前端。
 - **prompts.yml 键结构**：`main_agent.system_prompt`；`sub_agents.{tavily,db,ragflow}.{name,description,system_prompt}`；`app/agent/prompts.py` 与三个子智能体按这些键注册。MUST NOT 改键名而不改代码。

@@ -512,3 +512,49 @@ LangGraph/LangChain 依赖**。本更新推翻了原决策中"不改 uv.lock / p
   PASS（format 仅既有历史 drift，沿用 D015–D017 "format 未改"先例）；sqlite 全量 **731 passed /
   88 skipped / 0 failed**；定向 Research/Eval/Calibration 175 passed；PG gate 无 DSN 如实 skip
   （User Environment Gate，不伪造 81 passed）。
+
+## D019 — Multi-Session Backend：Session = thread 上层的对话容器域（session_id == thread_id）
+
+- **Status**: Accepted（2026-10-03，用户 Decision Closure 正式批准进入 Implementation；Feature =
+  Multi-Session Backend，本决策记录已闭合的设计点，不再重新讨论）
+- **Context**: 系统长期围绕单研究流程运行，缺少可持久化、可归档、可隔离、可并发的多会话容器；
+  现有 thread_id 已是贯穿 WS / checkpoint / 目录 / TaskRecord / ResearchRun / monitor 的会话身份，
+  F8 TaskRecord.parent_session 为从未使用的预留列。Task §5–§20 要求分析后以最小必要改动落地。
+- **Decision**:
+  - **Identity**：`Session.session_id == thread_id`（1:1 身份复用，唯一关联键）；不得新增第二套
+    Session/Thread 关联 ID；`parent_session` 保持 NULL/unused（不复用）。
+  - **Persistence**：`sessions` 表 = governance 迁移族 **additive 0002**（sqlite + postgres 双方言，
+    复用 governance store 连接 / backend 选择 / migration runner）；无 Session 独立 DB / env /
+    Store 单例 / 新依赖。
+  - **State**：仅 `ACTIVE ⇄ ARCHIVED`（archive = DELETE，幂等；unarchive = PATCH status=active，
+    幂等）；不实现 CREATED/PAUSED/COMPLETED/FAILED（容器层无真实语义）；Task/Runtime 执行状态
+    仍由 GovernanceController 全权负责。
+  - **Archive 守卫**：不允许 ARCHIVED + RUNNING —— 归档为**单事务条件更新**
+    （`archive_if_no_running`：active 且该 thread 无 running Task 才成功），并保留友好预读提示；
+    建任务侧在收敛旧任务（可能 await）后、submit 前**二次校验 Session 仍 active**
+    （server `_start_governed_task(precondition=…)`），关闭归档/建任务的并发窗口。
+  - **Isolation**：所有 Session-scoped 操作先验证 session 存在 → 状态合法 → `task.thread_id ==
+    session_id`，否则拒绝（404/409/400 映射到既有 HTTPException 错误模型）；不跨 Session 读取/取消。
+  - **API（additive）**：`POST/GET /api/sessions`、`GET/DELETE/PATCH /api/sessions/{id}`、
+    `POST/GET /api/sessions/{id}/tasks`、`POST /api/sessions/{id}/tasks/{task_id}/cancel`；
+    既有端点（含 POST /api/task）与旧客户端语义**零改动**（旧 thread 无需注册 Session）。
+    契约文档 = 仓库根 `MULTI_SESSION_API_SPEC.md`。
+  - **Runtime 边界**：Session 不拥有 lifecycle；Task 创建/取消复用 governance service/controller；
+    不修改 Harness / Agent Runtime / Research Pipeline / checkpoint / GovernanceController；
+    Frontend 不在本 Task 修改范围。
+  - **query enrich**：Session 任务摘要的 question 来自 research 面**独立只读 enrich**（fail-open；
+    research store disabled → null）；不做跨库 JOIN，不影响 governance 核心可用性。
+- **Alternatives**: TaskRecord 增独立 session_id 列（双关联键，重复建设，拒）；parent_session 复用作
+  session 键（语义模糊 + 双键，拒）；独立 sessions DB/store/env（重复三平面体系，拒）；多状态
+  Session（无生命周期语义，拒）；扩大 POST /api/task 强制注册 Session（破坏旧客户端，拒）。
+- **Consequences**: 对话/会话从"隐式 thread 键"升级为"可命名、可列表、可归档、可恢复的持久化
+  容器"；隔离由 thread 作用域结构性保证；并发多 Session 运行无需任何 runtime 改动。
+- **Constraints Created**: session_id 必须落在 `[A-Za-z0-9_-]{1,128}`；sessions 表只经
+  governance migration runner 演进（新版本 = `db/governance_migrations/NNNN_*.{sqlite,postgres}.sql`）；
+  session 域代码（app/session/）可依赖 governance service/store、不可反向依赖；不得新增 Session
+  Runtime 权威；Frontend 后续实现以 MULTI_SESSION_API_SPEC.md 为准。
+- **Related Problems**: 无新增（P004 净化规则沿用）
+- **Related Architecture**: ARCHITECTURE.md §2/§3/§6（app/session、依赖方向、端点契约）
+- **验证（2026-10-03，feature/multi-session-backend 分支）**：session 新套件 44 passed + PG 门控 3
+  skip（无 DSN 如实 skip）；sqlite 全量回归（见 Implementation Report §10）；ruff/format/compileall
+  全绿；governance 迁移清单断言更新为 0001+0002（additive 引起的期望变更）。
