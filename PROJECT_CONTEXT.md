@@ -14,8 +14,25 @@
 
 - 当前阶段：**F9-P0（Evidence-Driven Adaptive Research Loop）实施期，Batch 门控推进**
 - 当前 Feature：F9-P0（Spec Rev2 定稿 → Implementation Readiness Review **PASS** → Plan Rev2 **READY**）
-- 当前 Batch：**F9-P0 Batch 7 — Eval / Behavioral Quality Validation：PASS / FROZEN
-  （2026-09-30 用户正式 Freeze）**（报告 `docs/plan/2026-09-30-f9-p0-batch7-implementation-report.md`）
+- 当前 Batch：**F9-P0 Batch 8 — Stopping / Threshold Calibration：PASS / FROZEN
+  （2026-10-01 用户正式 Freeze）**（报告
+  `docs/plan/2026-10-01-f9-p0-batch8-implementation-report.md`；branch
+  `feature/f9-batch8-calibration`）
+- 当前状态：Batch 8 **PASS / FROZEN**（2026-10-01 用户正式 Freeze；calibration runner +
+  4 tests；61 点实验完成；推荐 = 维持现状默认值、无 production default 修改、无 frozen
+  contract 修改；sqlite 731 / 88 / 0、PG 81、Batch7 Gate PASS、Compatibility Gap = None。
+  前批：Batch 1–7 均 **PASS/FROZEN**）
+- 当前状态：Batch 7 **PASS / FROZEN**（2026-09-30；MERGED → main 619f6c7）。Batch8 =
+  用 Batch7 eval harness 校准 5 个 stopping/threshold 常量；D1–D3 CLOSED；D4 = 4
+  CALIBRATABLE + BUDGET_NEAR_RATIO REQUIRES_DECISION_CLOSURE（裁决 = 非 frozen，改值允许
+  同步行为边界测试）；校准实验 = 61 点扫描 → **推荐维持现状默认值（无 Pareto 改进证据，
+  不改码）**；Compatibility Gap = None；L2
+- 当前状态：Batch 7 **PASS / FROZEN**（2026-09-30；Eval 16/16、8/8 scenarios、sqlite 727/88、
+  PG 81、Compatibility Gap=None）已 MERGED → remote main（619f6c7）。Batch8 = 用 Batch7
+  eval harness 校准 5 个 stopping/threshold 常量（MIN_EVIDENCE / BUDGET_NEAR_RATIO /
+  max_research_rounds / max_no_progress_rounds / repeated_gap_threshold）；D1–D3 CLOSED；
+  D4 审计 = 4 CALIBRATABLE + BUDGET_NEAR_RATIO REQUIRES_DECISION_CLOSURE；Compatibility
+  Gap = None；L2（条件）
 - 当前状态：Batch 7 **PASS / FROZEN**（用户 2026-09-30 正式 Freeze；Eval 16/16 PASS、
   8/8 deterministic scenarios PASS、sqlite 727 passed / 88 skipped / 0 failed、
   PG 81 passed / 0 failed、ruff / compileall / diff-check PASS、Compatibility Gap = None；
@@ -23,15 +40,15 @@
   前批：Batch 1–5 **PASS/FROZEN** 2026-09-22/24/26/28/29、Batch 6 **PASS/FROZEN** 2026-09-30）
 - L0–L3 Task Classification Governance = **PASS / FROZEN**（2026-09-28 用户正式 Freeze；规则
   SoT = PROCESS.md §11；实施报告 `docs/plan/2026-09-28-l0-l3-governance-implementation-report.md`）
-- 是否允许继续实现：**否**。Batch7 Freeze 后禁止扩展（real-provider adapter / glue 抽取 /
-  durable round / Claim–Evidence Graph / Redis·Kafka·Neo4j·Vector / F8·F1–F7·Batch1–6 修改 /
-  无关 refactor）；不自行创建 Batch8
-- Git 状态（以实际 `git status` 为准；此处为索引快照）：`feature/f9-batch7-eval` branch
-  工作树含 Batch7 scope（app/f9/eval/*、4 个 eval 测试、Batch7 三份文档、本文件同步），
-  **未 Commit / Push / Merge**；base = main fdc0cdd + harness closure ce53b09
-- 当前唯一 Next Action：等待用户明确批准 Git Commit（AGENTS.md §10 / PROCESS.md §12：
-  Commit → Push → Merge main 逐步批准）；当前 branch = `feature/f9-batch7-eval`
-- Current Workflow Stage：**L2 · F9 Batch 7 FROZEN / 等待 User Approval 执行 Git Commit**——
+- 是否允许继续实现：**否**。Batch8 Freeze 后禁止扩展（参数继续调整 / real-provider
+  adapter / glue 抽取 / durable round / Claim–Evidence Graph / Redis·Kafka·Neo4j·Vector /
+  F8·F1–F7·Batch1–8 修改 / 无关 refactor）；不自行创建 Batch9
+- Git 状态（以实际 `git status` 为准）：branch = `feature/f9-batch8-calibration`（base =
+  main 619f6c7）；工作树含 Batch8 scope（calibration + test + 2 docs + 本文件同步），
+  **未 Commit / Push / Merge**
+- 当前唯一 Next Action：等待用户明确批准 Batch8 Git Commit（AGENTS.md §10 / PROCESS.md
+  §12：Commit → Push → Merge main 逐步批准）
+- Current Workflow Stage：**L2 · F9 Batch8 FROZEN / 等待 User Approval 执行 Git Commit**——
   本行为瞬时状态，Batch/任务结束即更新或清除；不新增规则
 
 > 备注：本仓库曾在用户要求下完成一轮 Harness 文档治理（新增本文件 + AGENTS/PROCESS
@@ -148,8 +165,10 @@ Deterministic Stopping → F7 finalization（normal 完成恰一次；F8 termina
 6. Batch 6 — Round Orchestrator ✅ **PASS / FROZEN**（2026-09-30 用户 Freeze；`_govadapt.py`
    real-provider adapter E2E 保持 DEFERRED / environment-limited）
 7. Batch 7 — Eval / Behavioral Quality 验证（baseline-vs-adaptive）✅ **PASS / FROZEN**
-   （2026-09-30 用户 Freeze；`feature/f9-batch7-eval`；Git Commit 待批准）
-8. Batch 8 —（后续 Feature/Batch 未定义；不得自行创建/实施）
+   （2026-09-30 用户 Freeze；已 MERGED → main 619f6c7）
+8. Batch 8 — Stopping / Threshold Calibration ✅ **PASS / FROZEN**（2026-10-01 用户 Freeze；
+   61 点实验 → 维持现状默认值；无 production default 修改；branch
+   `feature/f9-batch8-calibration`；Git Commit 待批准）
 
 ## 8. Important Known Limitations（仍影响后续开发的）
 
@@ -180,7 +199,8 @@ Deterministic Stopping → F7 finalization（normal 完成恰一次；F8 termina
 | F9 Batch 4 | **PASS / FROZEN**（2026-09-28 用户 Freeze） | `docs/plan/2026-09-27-f9-p0-batch4-implementation-report.md`；plan 34；回归 sqlite 679 passed / 0 failed；PG 双 DSN 74 passed（无 PG 集成，P1 in-memory） |
 | F9 Batch 5 | **PASS / FROZEN**（2026-09-29 用户 Freeze） | `docs/plan/2026-09-28-f9-p0-batch5-implementation-report.md`；targeted 15 + 真实 PG gate 3；回归 sqlite 694 passed / 0 failed；PG 双 DSN 77 passed（real-provider E2E 凭据受限，报告 §10） |
 | F9 Batch 6 | **PASS / FROZEN**（2026-09-30 用户 Freeze） | `docs/plan/2026-09-29-f9-p0-batch6-implementation-report.md`；orchestrator tests 17；回归 sqlite 711 passed / 88 skipped / 0 failed；PG 全量 81 passed（Batch5 口径 77；governance 先 reset）；`_govadapt.py` DEFERRED / environment-limited |
-| F9 Batch 7 | **PASS / FROZEN**（2026-09-30 用户 Freeze） | `docs/plan/2026-09-30-f9-p0-batch7-implementation-report.md`；eval 16/16 + 8/8 scenarios；回归 sqlite 727 passed / 88 skipped / 0 failed；PG 全量 81 passed；branch `feature/f9-batch7-eval`（Git Commit 待批准）；Compatibility Gap = None |
+| F9 Batch 7 | **PASS / FROZEN**（2026-09-30 用户 Freeze） | `docs/plan/2026-09-30-f9-p0-batch7-implementation-report.md`；eval 16/16 + 8/8 scenarios；回归 sqlite 727 passed / 88 skipped / 0 failed；PG 全量 81 passed；branch `feature/f9-batch7-eval`（已 MERGED → main 619f6c7）；Compatibility Gap = None |
+| F9 Batch 8 | **PASS / FROZEN**（2026-10-01 用户 Freeze） | `docs/plan/2026-10-01-f9-p0-batch8-implementation-report.md`；calibration runner + 4 tests；61 点实验 → 维持现状默认值（无 production default 修改）；回归 sqlite 731 passed / 88 skipped / 0 failed；PG 81 passed；branch `feature/f9-batch8-calibration`（Git Commit 待批准）；Compatibility Gap = None |
 
 ## 10. Important Files（改什么先看什么）
 
@@ -199,18 +219,16 @@ Deterministic Stopping → F7 finalization（normal 完成恰一次；F8 termina
 
 ## 11. Current Next Action
 
-> **当前唯一允许的下一步：等待用户批准 Batch7 Git Commit。**
-> - F9-P0 Batch 1–7 均已 **PASS / FROZEN**（2026-09-22 / 09-24 / 09-26 / 09-28 / 09-29 /
->   09-30 用户正式 Freeze）；`main` = Historical Freeze Baseline（`fdc0cdd`，已 push）＋
->   Harness Git Workflow Governance Closure（`ce53b09`，本地）；Git Workflow 规则已入
->   Harness（AGENTS.md §10 / PROCESS.md §12）；
-> - Batch7 = **Eval / Behavioral Quality Validation（L2）＝ PASS / FROZEN（2026-09-30）**；
->   当前 branch = **`feature/f9-batch7-eval`**（工作树含 Batch7 scope，未 Commit/Push/Merge）；
+> **当前唯一允许的下一步：等待用户批准 Batch8 Git Commit。**
+> - F9-P0 Batch 1–8 均已 **PASS / FROZEN**（2026-09-22/24/26/28/29/30、2026-10-01）；
+>   Git Workflow 规则在 Harness（AGENTS.md §10 / PROCESS.md §12）；
+> - Batch8 = **Stopping / Threshold Calibration** ＝ **PASS / FROZEN（2026-10-01）**；当前
+>   branch = **`feature/f9-batch8-calibration`**（工作树含 Batch8 scope，未 Commit）；
 > - 用户批准后按序执行：**Commit → Push → Merge main**（每步单独批准；AGENTS.md §10 /
 >   PROCESS.md §12）；commit 前执行 Git Scope Audit（intended files / no secrets / no
 >   frozen-mod / diff --check）；
-> - 未获用户指令前：不 Commit/Push/Merge、不修改 Batch7 frozen scope、不修改 F8/F1–F7/
->   Batch1–6、不自行创建 Batch8；遇 frozen contract 冲突 → STOP 并报 COMPATIBILITY GAP。
+> - 未获用户指令前：不 Commit/Push/Merge、不修改 Batch8 frozen scope、不修改 F8/F1–F7/
+>   Batch1–7、不自行创建 Batch9；遇 frozen contract 冲突 → STOP 并报 COMPATIBILITY GAP。
 
 ## 12. Context Maintenance Rules
 
