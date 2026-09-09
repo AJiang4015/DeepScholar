@@ -14,31 +14,25 @@
 
 - 当前阶段：**F9-P0（Evidence-Driven Adaptive Research Loop）实施期，Batch 门控推进**
 - 当前 Feature：F9-P0（Spec Rev2 定稿 → Implementation Readiness Review **PASS** → Plan Rev2 **READY**）
-- 当前 Batch：**F9-P0 Batch 6 — Round Orchestrator：PASS / FROZEN（2026-09-30 用户正式
-  Freeze）**（报告 `docs/plan/2026-09-29-f9-p0-batch6-implementation-report.md`）
-- 当前状态：Batch 6 **PASS / FROZEN**（用户 2026-09-30 正式 Freeze；D1–D6 + F7-once matrix
-  全 PASS；sqlite 711 passed / 88 skipped / 0 failed、PG 81 passed / 0 failed、Batch6 tests
-  17 passed；`_govadapt.py` real-provider adapter E2E = DEFERRED / environment-limited，
-  不修改 Batch6 frozen contract、不虚报 PASS；ARCHITECTURE §3 例外回填一并 Freeze。
-  前批：Batch 1 **PASS/FROZEN** 2026-09-22、Batch 2 2026-09-24、Batch 3 2026-09-26、
-  Batch 4 2026-09-28、Batch 5 2026-09-29）
+- 当前 Batch：**F9-P0 Batch 7 — Eval / Behavioral Quality Validation：PASS / FROZEN
+  （2026-09-30 用户正式 Freeze）**（报告 `docs/plan/2026-09-30-f9-p0-batch7-implementation-report.md`）
+- 当前状态：Batch 7 **PASS / FROZEN**（用户 2026-09-30 正式 Freeze；Eval 16/16 PASS、
+  8/8 deterministic scenarios PASS、sqlite 727 passed / 88 skipped / 0 failed、
+  PG 81 passed / 0 failed、ruff / compileall / diff-check PASS、Compatibility Gap = None；
+  real provider 未执行属已记录 limitation，不阻塞 deterministic Gate。
+  前批：Batch 1–5 **PASS/FROZEN** 2026-09-22/24/26/28/29、Batch 6 **PASS/FROZEN** 2026-09-30）
 - L0–L3 Task Classification Governance = **PASS / FROZEN**（2026-09-28 用户正式 Freeze；规则
   SoT = PROCESS.md §11；实施报告 `docs/plan/2026-09-28-l0-l3-governance-implementation-report.md`）
-- 是否允许继续实现：**否**。Batch6 Freeze 后禁止扩展（_govadapt 实现 / run_deep_agent glue
-  抽取 / polling·status-sync / durable round state / Claim–Evidence Graph / Redis·Kafka·
-  Neo4j·VectorDB / F8·F1–F7·Batch1–5 修改 / 无关 refactor）；glue duplication = Known Risk，
-  非当前 defect
-- Git 状态（以实际 `git status` 为准；此处为索引快照）：`main` = **Historical Freeze
-  Baseline（commit `fdc0cdd`，已 push origin/main，working tree clean）**；Batch1–6 冻结
-  历史已登记入库（一次性 baseline registration，2026-09-30 用户批准）；无未提交改动
-- 当前唯一 Next Action：F9-P0 **Batch 7 Readiness Review 已提交（COMPLETE）**，等待用户
-  Review / Decision Closure；**Batch7 Implementation = NOT STARTED**
-- 下次 Batch7 Implementation 起：必须创建 dedicated feature branch
-  **`feature/f9-batch7-eval`**（AGENTS.md §10 / PROCESS.md §12；Readiness 文档已随
-  baseline 进 main，不在此创建 branch）
-- Current Workflow Stage：**L2 · F9 Batch 7 Readiness Review 提交 / Implementation 未开始
-  （等待用户 Review / Decision Closure）**——本行为瞬时状态，Batch/任务结束即更新或清除；
-  不新增规则
+- 是否允许继续实现：**否**。Batch7 Freeze 后禁止扩展（real-provider adapter / glue 抽取 /
+  durable round / Claim–Evidence Graph / Redis·Kafka·Neo4j·Vector / F8·F1–F7·Batch1–6 修改 /
+  无关 refactor）；不自行创建 Batch8
+- Git 状态（以实际 `git status` 为准；此处为索引快照）：`feature/f9-batch7-eval` branch
+  工作树含 Batch7 scope（app/f9/eval/*、4 个 eval 测试、Batch7 三份文档、本文件同步），
+  **未 Commit / Push / Merge**；base = main fdc0cdd + harness closure ce53b09
+- 当前唯一 Next Action：等待用户明确批准 Git Commit（AGENTS.md §10 / PROCESS.md §12：
+  Commit → Push → Merge main 逐步批准）；当前 branch = `feature/f9-batch7-eval`
+- Current Workflow Stage：**L2 · F9 Batch 7 FROZEN / 等待 User Approval 执行 Git Commit**——
+  本行为瞬时状态，Batch/任务结束即更新或清除；不新增规则
 
 > 备注：本仓库曾在用户要求下完成一轮 Harness 文档治理（新增本文件 + AGENTS/PROCESS
 > 最小更新，2026-09-22，见 `docs/plan/2026-09-22-harness-document-governance-report.md`）。
@@ -153,10 +147,9 @@ Deterministic Stopping → F7 finalization（normal 完成恰一次；F8 termina
 5. Batch 5 — Targeted Research + Incremental Verification（direct tool + 增量 F3 + PG gate）✅ **PASS / FROZEN**（2026-09-29 用户 Freeze）
 6. Batch 6 — Round Orchestrator ✅ **PASS / FROZEN**（2026-09-30 用户 Freeze；`_govadapt.py`
    real-provider adapter E2E 保持 DEFERRED / environment-limited）
-7. Batch 7 — Eval / Behavioral Quality 验证（baseline-vs-adaptive；**Readiness Review 先行**，
-   仅 Readiness，等待用户 Review；不直接进入 Implementation）
-8. Batch 8 —（原 Plan Rev2 记为 Eval/Final Gate；与 Batch7 的 Eval 范围关系待 Batch7
-   Decision Closure 明确，本行不自动实施）
+7. Batch 7 — Eval / Behavioral Quality 验证（baseline-vs-adaptive）✅ **PASS / FROZEN**
+   （2026-09-30 用户 Freeze；`feature/f9-batch7-eval`；Git Commit 待批准）
+8. Batch 8 —（后续 Feature/Batch 未定义；不得自行创建/实施）
 
 ## 8. Important Known Limitations（仍影响后续开发的）
 
@@ -187,6 +180,7 @@ Deterministic Stopping → F7 finalization（normal 完成恰一次；F8 termina
 | F9 Batch 4 | **PASS / FROZEN**（2026-09-28 用户 Freeze） | `docs/plan/2026-09-27-f9-p0-batch4-implementation-report.md`；plan 34；回归 sqlite 679 passed / 0 failed；PG 双 DSN 74 passed（无 PG 集成，P1 in-memory） |
 | F9 Batch 5 | **PASS / FROZEN**（2026-09-29 用户 Freeze） | `docs/plan/2026-09-28-f9-p0-batch5-implementation-report.md`；targeted 15 + 真实 PG gate 3；回归 sqlite 694 passed / 0 failed；PG 双 DSN 77 passed（real-provider E2E 凭据受限，报告 §10） |
 | F9 Batch 6 | **PASS / FROZEN**（2026-09-30 用户 Freeze） | `docs/plan/2026-09-29-f9-p0-batch6-implementation-report.md`；orchestrator tests 17；回归 sqlite 711 passed / 88 skipped / 0 failed；PG 全量 81 passed（Batch5 口径 77；governance 先 reset）；`_govadapt.py` DEFERRED / environment-limited |
+| F9 Batch 7 | **PASS / FROZEN**（2026-09-30 用户 Freeze） | `docs/plan/2026-09-30-f9-p0-batch7-implementation-report.md`；eval 16/16 + 8/8 scenarios；回归 sqlite 727 passed / 88 skipped / 0 failed；PG 全量 81 passed；branch `feature/f9-batch7-eval`（Git Commit 待批准）；Compatibility Gap = None |
 
 ## 10. Important Files（改什么先看什么）
 
@@ -205,19 +199,18 @@ Deterministic Stopping → F7 finalization（normal 完成恰一次；F8 termina
 
 ## 11. Current Next Action
 
-> **当前唯一允许的下一步：等待用户对 Batch7 Readiness Review / Decision Closure 的 Review。**
-> - F9-P0 Batch 1–6 均已 **PASS / FROZEN**（2026-09-22 / 09-24 / 09-26 / 09-28 / 09-29 /
->   09-30 用户正式 Freeze），实现与验证证据保留、无额外重构；`main` = Historical Freeze
->   Baseline（`fdc0cdd`，已登记入库并 push）；
-> - Batch7 **Readiness = COMPLETE**（`docs/plan/2026-09-30-f9-p0-batch7-readiness-review.md`，
->   CONDITIONAL；D1–D6 Required Decisions 待用户裁决）；**Batch7 Implementation = NOT
->   STARTED**；
-> - 用户批准 Batch7 Readiness / Decision Closure 后，Batch7 Implementation 必须创建
->   dedicated feature branch **`feature/f9-batch7-eval`**（Git Workflow：AGENTS.md §10 /
->   PROCESS.md §12），不得在 `main` 上实施；
-> - 未获用户指令前：不得创建该 branch、不得开始 Batch7 Implementation、不得修改代码 /
->   F8 / F1–F7 / Batch1–6 / 已批准 Harness 规则；遇 frozen contract 冲突 → STOP 并报
->   COMPATIBILITY GAP。
+> **当前唯一允许的下一步：等待用户批准 Batch7 Git Commit。**
+> - F9-P0 Batch 1–7 均已 **PASS / FROZEN**（2026-09-22 / 09-24 / 09-26 / 09-28 / 09-29 /
+>   09-30 用户正式 Freeze）；`main` = Historical Freeze Baseline（`fdc0cdd`，已 push）＋
+>   Harness Git Workflow Governance Closure（`ce53b09`，本地）；Git Workflow 规则已入
+>   Harness（AGENTS.md §10 / PROCESS.md §12）；
+> - Batch7 = **Eval / Behavioral Quality Validation（L2）＝ PASS / FROZEN（2026-09-30）**；
+>   当前 branch = **`feature/f9-batch7-eval`**（工作树含 Batch7 scope，未 Commit/Push/Merge）；
+> - 用户批准后按序执行：**Commit → Push → Merge main**（每步单独批准；AGENTS.md §10 /
+>   PROCESS.md §12）；commit 前执行 Git Scope Audit（intended files / no secrets / no
+>   frozen-mod / diff --check）；
+> - 未获用户指令前：不 Commit/Push/Merge、不修改 Batch7 frozen scope、不修改 F8/F1–F7/
+>   Batch1–6、不自行创建 Batch8；遇 frozen contract 冲突 → STOP 并报 COMPATIBILITY GAP。
 
 ## 12. Context Maintenance Rules
 
