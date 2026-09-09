@@ -7,7 +7,7 @@
 ## 0. 状态总览
 
 ```text
-INTAKE → INSPECTION → PLAN → IMPLEMENTATION → VERIFICATION → REVIEW → COMPLETE
+INTAKE → INSPECTION → PLAN → IMPLEMENTATION → VERIFICATION → REVIEW → PROBLEM CAPTURE REVIEW → COMPLETE
 ```
 
 允许的返回边：
@@ -15,6 +15,10 @@ INTAKE → INSPECTION → PLAN → IMPLEMENTATION → VERIFICATION → REVIEW �
 - VERIFICATION FAILED → IMPLEMENTATION（REJECT COMPLETION）
 - REVIEW 发现架构违规 / 验收未覆盖 → IMPLEMENTATION（或 INSPECTION，视缺陷性质）
 - 任何状态发现问题理解错误 → 回到 INSPECTION
+
+> PROBLEM CAPTURE REVIEW（§13）发现需立即修复的问题：不并入本 Task 范围（最小修改 /
+> Freeze 纪律，AGENTS.md §5 / §10.3）；按 PROBLEM.md 登记或提交 Candidate 后，作为新 Task
+> 或经用户指示另行处理。
 
 ## 1. INTAKE
 
@@ -87,7 +91,7 @@ INTAKE → INSPECTION → PLAN → IMPLEMENTATION → VERIFICATION → REVIEW �
 
 ## 7. COMPLETE
 
-- **Entry Condition**：COMPLETION GATE（§9）全部通过。
+- **Entry Condition**：COMPLETION GATE（§9）全部通过；PROBLEM CAPTURE REVIEW（§13）已完成。
 - **Required Evidence**：完成报告（TESTING.md §4 Evidence Requirement 六问）。
 - **Exit Condition**：终态。
 
@@ -118,7 +122,7 @@ INTAKE → INSPECTION → PLAN → IMPLEMENTATION → VERIFICATION → REVIEW �
 - **Testing**：定向验证是否按改动范围执行（TESTING.md §2）？回归/安全测试是否按需执行？验收标准是否有证据映射？
 - **Change Scope**：是否只改了必要文件？有无投机重构、多余依赖、意外 API 变化？
 - **Security**：安全不变量是否保持？负路径是否按实际攻击面测试（TESTING.md §5 Security Test Matrix）？fail-closed 是否保留？
-- **Documentation**：新重大 Problem / Decision / 架构变更是否记录？
+- **Documentation**：新重大 Problem / Problem Candidate（含 §13 Problem Capture Review 决策）/ Decision / 架构变更是否记录？
 - **Risk**：剩余风险、未验证假设、已知限制是否报告？
 
 全部通过才允许进入 COMPLETE。任何一项为 No → NOT COMPLETE（REJECT COMPLETION）。
@@ -140,9 +144,9 @@ COMPLETION GATE 只能在 **VERIFICATION PASSED 且 REVIEW 通过**之后执行�
 
 | 等级 | 含义 / 例子 | 流程 |
 |---|---|---|
-| **L0** Read-only / Analysis | architecture review、readiness review、audit、investigation、analysis、文档一致性检查；不产代码 | `Read → Inspect → Analyze → Report → STOP`；**不产生 Implementation Plan，禁止实现** |
-| **L1** Local / Low-risk Change | 单点 bug fix、单函数局部修复、明确的小型测试修复、typo / 文档更正；不触架构 / 公共契约 / 跨模块边界 | `INTAKE → INSPECTION → 轻量计划 → IMPLEMENTATION → VERIFICATION → REVIEW → COMPLETE`；**可省略正式 Spec / Implementation Plan 文档**，但 INSPECTION 与 PREFLIGHT 轻量清单必走 |
-| **L2** Feature / Cross-module Change | 新功能、API / contract 修改、跨模块修改、Agent capability、Research Plane 行为变化、前后端契约变化 | `Spec（或既有 Spec 段）→ Spec Review → Implementation Plan → Plan Review → IMPLEMENTATION → VERIFICATION → REVIEW → Report → User Review → Freeze` |
+| **L0** Read-only / Analysis | architecture review、readiness review、audit、investigation、analysis、文档一致性检查；不产代码 | `Read → Inspect → Analyze → Report → STOP`；**不产生 Implementation Plan，禁止实现**；报告须含 §13 三问结论，发现问题只建议 Candidate / 登记（不直接建档） |
+| **L1** Local / Low-risk Change | 单点 bug fix、单函数局部修复、明确的小型测试修复、typo / 文档更正；不触架构 / 公共契约 / 跨模块边界 | `INTAKE → INSPECTION → 轻量计划 → IMPLEMENTATION → VERIFICATION → REVIEW → PROBLEM CAPTURE REVIEW → COMPLETE`；**可省略正式 Spec / Implementation Plan 文档**，但 INSPECTION 与 PREFLIGHT 轻量清单必走 |
+| **L2** Feature / Cross-module Change | 新功能、API / contract 修改、跨模块修改、Agent capability、Research Plane 行为变化、前后端契约变化 | `Spec（或既有 Spec 段）→ Spec Review → Implementation Plan → Plan Review → IMPLEMENTATION → VERIFICATION → REVIEW → PROBLEM CAPTURE REVIEW → Report → User Review → Freeze` |
 | **L3** Architecture / High-risk Change | 修改 F8 / F1–F7 frozen、Runtime lifecycle、task_id/run_id/thread_id、checkpoint/persistence、budget/timeout/cancellation、新 Agent/Runtime/Controller、DB schema/migration、新基础设施、concurrency/recovery/replay、安全边界、跨模块核心协议 | L2 全部 + `Readiness Review（Contract 闭合）→ Decision Closure → … → Adversarial/Integration Verification → 架构/实现 Review → User Freeze` |
 
 ### 11.2 判级原则（MUST）
@@ -212,7 +216,7 @@ Frozen modules:
 
 ### 12.3 Verification / Review / Freeze
 
-- VERIFICATION PASSED（§5）→ REVIEW（§6）→ Implementation Report。
+- VERIFICATION PASSED（§5）→ REVIEW（§6）→ PROBLEM CAPTURE REVIEW（§13）→ Implementation Report。
 - **User Freeze**（§11.4）为技术状态裁决：表示"实现与验证通过、禁止再加功能"。
 - **Freeze 不等于 Git commit 权限**：Freeze 后仍须按 §12.4 逐项批准。
 
@@ -255,3 +259,33 @@ secrets·config / 无 scope creep。发现越界 → **STOP**，不得通过 com
 工作树含多 Feature/Batch 混合、无法确认归属、或历史遗留无法分类的改动 → 按
 AGENTS.md §10.5：`STOP → report → wait`；不得自行猜测/拆分/reset/stash/cherry-pick/
 重写历史。历史补登记（baseline）仅在用户显式批准下可直接在 main 提交。
+
+## 13. PROBLEM CAPTURE REVIEW（Post-Task 问题沉淀门）
+
+> 章节编号靠后仅为避免重排既有引用（§8–§12 编号被 AGENTS.md / 历史文档引用）；状态机位置以
+> §0 总览与 §11.1 流程行为准。行为义务（何时必须评估）见 AGENTS.md §11；登记标准 / Type /
+> 格式见 PROBLEM.md；本节定义本节点如何执行与证据要求。
+
+- **Position**：REVIEW 之后、Freeze / COMPLETE 之前（§0；§11.1 L1–L3；§12.3）。
+  L0 任务不单列节点：三问结论并入分析报告，发现问题只记录建议，不直接建档
+  （建档属 L1 文档变更）。
+- **Entry Condition**：REVIEW 通过（VERIFICATION PASSED 且无未处理违规）。
+- **Required Actions**：
+  1. 按 AGENTS.md §11.1 触发清单回顾本任务（调试陷阱、隐含约束、返工、文档偏差、
+     边界缺失、可复现问题）；
+  2. 逐项自答 AGENTS.md §11.3 三问，给出 Yes/No 与一句话依据；
+  3. 按 PROBLEM.md 标准作出唯一决策：**D1 不登记**（默认）；**D2 直接登记**（达标）→ 创建
+     `docs/problem/P0NN-*.md` 并在 PROBLEM.md 索引追加一行（含 Type）；**D3 提交 Candidate**
+     （有长期价值未达标）→ 创建 `docs/problem/candidates/<slug>.md`；**D4 既有 candidate
+     近命中** → 阅读并补充证据或评估晋升。
+- **克制约束**：本节点只判断"是否存在需长期登记的问题"，不自动批量创建；普通 bug / 一次性
+  问题默认 D1；登记产物不并入本 Task 实现范围，作为独立 docs 提交单元走 Commit Gate
+  （AGENTS.md §10.6）。
+- **Required Evidence**：三问逐项答案 + 决策类别（D1/D2/D3/D4）+（D2/D3/D4 时）创建 / 更新的
+  文件路径。
+- **Exit Condition**：决策已作出；D2/D3/D4 的 docs 产物与索引 / 目录一致；可进入 COMPLETE（L1）
+  或 Implementation Report → User Freeze（L2/L3）。
+- **Forbidden Transition**：跳过三问宣称 COMPLETE / Freeze；把未达门槛问题批量登记为 Problem；
+  将捕获产物未经 Commit Gate 混入 Feature/Batch commit。
+- **REVIEW 拒绝路径**：REVIEW 判定本节点产生无关 / 低质登记 → REJECT → 移除登记或降级为
+  candidate（按 PROBLEM.md 使用规则）。

@@ -204,3 +204,46 @@ Commit message：语义清晰、对应一个完整逻辑变更（如 `feat(...)`
   零 frozen contract 修改、working tree 仅含被批准的 Harness 文件。
 - **不允许**：涉及 Feature/Batch Implementation、产品代码、架构实现或高风险行为的
   Harness 变更仍必须走对应 L2/L3 feature branch workflow（§10.1–§10.6 不受本条影响）。
+
+## 11. Problem Capture（问题沉淀；Engineering Problem Registry）
+
+> 归属：PROBLEM.md 是**工程问题注册表（Engineering Problem Registry）**的索引——定义 What 被登记、
+> Type 词表与登记门槛；本节定义 Agent **何时必须评估沉淀**（行为 What）；执行节点与证据要求见
+> PROCESS.md §13（How）。注册表不限于安全漏洞与生产故障：还沉淀运行时行为约束、架构约束、
+> 测试/环境限制、流程误解导致的返工、文档与实现偏差、Agent 易重复犯的错误模式等长期工程知识。
+
+### 11.1 Capture Triggers（主动评估触发，MUST）
+
+任务执行中出现以下任一情况，Agent MUST 评估"是否产生应沉淀的 Problem"（**评估 ≠ 必须登记**）：
+
+- 问题具有复现可能（现象可再次触发）；
+- 调试 / 排错依赖隐含知识（未在任何文档或代码注释中显式可见）；
+- 暴露系统边界缺失或契约缺口；
+- 已导致或将导致重复返工；
+- 暴露文档与实际行为不一致；
+- 未来 Agent 很可能重复踩坑。
+
+### 11.2 Problem 范围（不限定）
+
+Problem **不限定**为 Security vulnerability 或 Production incident，可以包括：Runtime behavior
+issue、Architecture constraint、Testing limitation、Environment trap、Agent workflow mistake、
+Correctness issue、Process misunderstanding 等。完整 Type 词表与登记标准在 PROBLEM.md
+（此处不复制，避免双源）。
+
+### 11.3 Problem Capture Review（Task 完成前 MUST）
+
+每个 Task 完成前（PROCESS.md §13 PROBLEM CAPTURE REVIEW 节点），MUST 逐项自答三问：
+
+1. 本任务是否发现新的长期约束？
+2. 是否产生未来 Agent 需要知道的信息？
+3. 是否存在重复发生风险？
+
+任一回答 Yes：按 PROBLEM.md 登记标准处置——达标 → 创建 Problem（`docs/problem/P0NN-*.md`
++ PROBLEM.md 索引行）；有长期价值但未达标 → 提交 Problem Candidate
+（`docs/problem/candidates/`）；均不达标 → 不登记，并在证据中记录"No"。
+
+### 11.4 克制原则
+
+Problem Capture Review 只增加"评估义务"，不增加登记义务，不得批量制造问题：普通 Bug、
+临时调试问题、一次性实现细节仍按 PROBLEM.md 门槛排除（本规则**不降低登记门槛**）。捕获产物是
+知识记录（`docs/problem/`），不是代码改动，不得借本规则扩大任务实现范围（§4、§5 不受影响）。
