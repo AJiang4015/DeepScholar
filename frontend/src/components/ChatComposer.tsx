@@ -9,9 +9,12 @@ import type { UploadFile } from "antd";
 import type { UploadedItem } from "../types";
 
 interface ChatComposerProps {
+  isArchived?: boolean;
   isCancelling: boolean;
   isRunning: boolean;
   isUploading: boolean;
+  /** 运行中是否允许取消（task_id 尚未就绪时禁用取消，避免无身份取消请求）。 */
+  cancelEnabled?: boolean;
   onNewSession: () => void;
   onCancel: () => void;
   onQueryChange: (value: string) => void;
@@ -48,9 +51,11 @@ function uniqueUploadedItems(items: UploadedItem[]): UploadedItem[] {
 }
 
 export function ChatComposer({
+  isArchived = false,
   isCancelling,
   isRunning,
   isUploading,
+  cancelEnabled = true,
   onCancel,
   onNewSession,
   onQueryChange,
@@ -62,7 +67,12 @@ export function ChatComposer({
   uploadedItems
 }: ChatComposerProps) {
   const hasStagedFiles = stagedItems.length > 0;
-  const canSubmit = query.trim().length > 0;
+  const inputLocked = isRunning || isArchived;
+  const canSubmit = !inputLocked && query.trim().length > 0;
+  const cancelDisabled = isRunning && !cancelEnabled;
+  const placeholder = isArchived
+    ? "会话已归档，仅可查看历史任务…"
+    : "向 DeepSearch Agents 发送任务...";
 
   function handleAttachmentChange(fileList: UploadFile[]) {
     const nextItems = uniqueUploadedItems(
@@ -109,15 +119,17 @@ export function ChatComposer({
       <div className="composer-shell">
         <textarea
           aria-label="研搜任务"
-          disabled={isRunning}
+          disabled={inputLocked}
           onChange={(event) => onQueryChange(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === "Enter" && !event.shiftKey) {
               event.preventDefault();
-              onSubmit();
+              if (!inputLocked) {
+                onSubmit();
+              }
             }
           }}
-          placeholder="向 DeepSearch Agents 发送任务..."
+          placeholder={placeholder}
           value={query}
         />
 
@@ -141,11 +153,11 @@ export function ChatComposer({
               }}
               showUploadList={false}
             >
-              <Tooltip title="选择附件">
+              <Tooltip title={isArchived ? "归档会话不可上传附件" : "选择附件"}>
                 <Button
                   aria-label="选择附件"
                   className="composer-icon-button"
-                  disabled={isRunning || isUploading}
+                  disabled={isRunning || isUploading || isArchived}
                   icon={<PaperClipOutlined />}
                   shape="circle"
                 />
@@ -157,7 +169,7 @@ export function ChatComposer({
             <Button
               aria-label={isRunning ? "取消当前任务" : "发送任务"}
               className={isRunning ? "send-button send-button--cancel" : "send-button"}
-              disabled={isRunning ? isCancelling : !canSubmit}
+              disabled={isRunning ? isCancelling || cancelDisabled : !canSubmit}
               icon={isRunning ? <StopOutlined /> : <SendOutlined />}
               loading={isCancelling}
               onClick={isRunning ? onCancel : onSubmit}

@@ -90,6 +90,88 @@ export interface UploadResponse {
   files: string[];
 }
 
+// ---------------------------------------------------------------------------
+// Session domain（Multi-Session；契约 = 仓库根 MULTI_SESSION_API_SPEC.md）
+//   session_id == thread_id（1:1）；Task 属于 Session ⇔ task.thread_id == session_id
+// ---------------------------------------------------------------------------
+
+/** Session 容器状态（两态，无其他生命周期语义）。 */
+export type SessionStatus = "active" | "archived";
+
+/** GET /api/sessions 列表项（含聚合摘要）或 Session 元数据。 */
+export interface SessionSummary {
+  session_id: string;
+  title: string;
+  description: string | null;
+  status: SessionStatus | string;
+  created_at: string | null;
+  updated_at: string | null;
+  /** 聚合字段（list 端点提供；POST 创建响应不含） */
+  task_count?: number;
+  running_tasks?: number;
+  latest_task?: LatestTaskSummary | null;
+}
+
+/** Session 最新一条 governance task 摘要（列表/详情聚合）。 */
+export interface LatestTaskSummary {
+  task_id: string;
+  run_id?: string | null;
+  status: string;
+  terminal_reason?: string | null;
+  created_at?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+}
+
+/** Session 下的 Task 行 = governance task_dict + query enrich（可为 null，勿依赖非空）。 */
+export interface SessionTask extends TaskInfo {
+  query?: string | null;
+}
+
+export interface SessionListResponse {
+  sessions: SessionSummary[];
+  total: number;
+}
+
+export interface SessionDetailResponse {
+  session: SessionSummary;
+  tasks: SessionTask[];
+  task_count: number;
+  running_tasks: number;
+  latest_task: LatestTaskSummary | null;
+}
+
+export interface SessionTaskListResponse {
+  session_id: string;
+  tasks: SessionTask[];
+}
+
+export interface ArchiveSessionResponse {
+  session_id: string;
+  status: SessionStatus | string;
+  already_archived: boolean;
+  updated_at?: string | null;
+}
+
+export interface RestoreSessionResponse {
+  session_id: string;
+  status: SessionStatus | string;
+  already_active: boolean;
+  updated_at?: string | null;
+}
+
+/** SessionWorkspace → App 的轻量运行态快照（仅展示用；runtime authority 仍在 workspace hook 内）。 */
+export interface SessionRuntimeSnapshot {
+  connectionState: ConnectionState;
+  isRunning: boolean;
+  stats: {
+    toolEvents: number;
+    assistantEvents: number;
+    errorEvents: number;
+    fileCount: number;
+  };
+}
+
 export interface OutputFile {
   name: string;
   type: "file" | string;

@@ -1,269 +1,297 @@
-import {
-  ApiOutlined,
-  BranchesOutlined,
-  CheckCircleOutlined,
-  CloseCircleOutlined,
-  CloudServerOutlined,
-  DatabaseOutlined,
-  FileSearchOutlined,
-  ToolOutlined
-} from "@ant-design/icons";
-import { Alert, App as AntApp, Button } from "antd";
-import { useEffect, useRef, useState } from "react";
-import { ChatComposer } from "./components/ChatComposer";
-import { ConversationThread } from "./components/ConversationThread";
+import { Alert, App as AntApp } from "antd";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { SessionSidebar } from "./components/SessionSidebar";
+import { SessionWorkspace } from "./components/SessionWorkspace";
 import type { ChatTurn } from "./components/ConversationThread";
-import { API_BASE_URL, WS_BASE_URL } from "./lib/config";
-import { useDeepAgentSession } from "./hooks/useDeepAgentSession";
-import type { ConnectionState, UploadedItem } from "./types";
-
-function connectionLabel(state: ConnectionState): string {
-  const labels: Record<ConnectionState, string> = {
-    connecting: "连接中",
-    connected: "已连接",
-    reconnecting: "重连中",
-    closed: "已关闭"
-  };
-  return labels[state];
-}
-
-function createTurn(content: string): ChatTurn {
-  return {
-    id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}`,
-    content,
-    events: [],
-    files: [],
-    isRunning: true,
-    result: "",
-    taskStatus: null,
-    timestamp: new Date().toISOString()
-  };
-}
+import {
+  archiveSession,
+  createSession,
+  listSessions,
+  restoreSession
+} from "./lib/api";
+import {
+  peekStoredThreadId,
+  storeThreadId
+} from "./lib/thread";
+import type {
+  SessionRuntimeSnapshot,
+  SessionSummary
+} from "./types";
 
 export default function App() {
   const { message } = AntApp.useApp();
-  const [query, setQuery] = useState("");
-  const [stagedItems, setStagedItems] = useState<UploadedItem[]>([]);
-  const [turns, setTurns] = useState<ChatTurn[]>([]);
-  const streamRef = useRef<HTMLElement | null>(null);
-  const session = useDeepAgentSession();
+  const [sessions, setSessions] = useState<SessionSummary[]>([]);
+  const [sessionsLoading, setSessionsLoading] = useState(true);
+  const [sessionsError, setSessionsError] = useState<string | null>(null);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [booting, setBooting] = useState(true);
+  const [bootError, setBootError] = useState<string | null>(null);
+  // Browser-lifetime 内存缓存（非 durable transcript）：session → turns
+  const [turnsBySession, setTurnsBySession] = useState<Record<string, ChatTurn[]>>({});
+  // 当前 Session 的展示元数据（权威 status 来自 GET /api/sessions/{id}；列表刷新失败时保留旧值）
+  const [currentMeta, setCurrentMeta] = useState<SessionSummary | null>(null);
+  // 当前 Session 的轻量运行态快照（仅展示用；runtime authority 在 SessionWorkspace hook）
+  const [runtime, setRuntime] = useState<SessionRuntimeSnapshot | null>(null);
 
+  const refreshSessions = useCallback(async () => {
+    setSessionsLoading(true);
+    setSessionsError(null);
+    try {
+      // Sidebar 需要同时呈现 active + archived（archived 用于恢复入口），一次拉全量后分组
+      const data = await listSessions({ includeArchived: true });
+      setSessions(data.sessions);
+      return data.sessions;
+    } catch (error) {
+      const text = error instanceof Error ? error.message : "加载会话列表失败";
+      setSessionsError(text);
+      return [];
+    } finally {
+      setSessionsLoading(false);
+    }
+  }, []);
+
+  /** 本地乐观更新 session 状态（归档/恢复成功后立即生效，避免等待列表刷新）。 */
+  function patchSessionStatus(sessionId: string, status: SessionSummary["status"]) {
+    setSessions((previous) =>
+      previous.map((item) =>
+        item.session_id === sessionId ? { ...item, status } : item
+      )
+    );
+  }
+
+  // boot：恢复 currentSessionId（含 legacy thread 自动注册为 Session）
   useEffect(() => {
-    setTurns((previous) => {
-      if (previous.length === 0) {
-        return previous;
-      }
+    let disposed = false;
 
-      const latestTurn = previous[previous.length - 1];
-      const sessionStatus = session.taskStatus
-        ? {
-            status: session.taskStatus.status,
-            error: session.taskStatus.error ?? null,
-            terminalReason: session.taskStatus.terminal_reason ?? null
+    async function boot() {
+      setBooting(true);
+      try {
+        // 先确认服务端可达（顺带全量会话列表）
+        const data = await listSessions({ includeArchived: true });
+        if (disposed) {
+          return;
+        }
+        const allSessions = data.sessions;
+        setSessions(allSessions);
+
+        const targetId = peekStoredThreadId();
+        let chosenId: string | null = null;
+        if (targetId) {
+          const registered = allSessions.find((item) => item.session_id === targetId);
+          if (!registered) {
+            // legacy thread 未注册 → POST /api/sessions {thread_id} 注册为 Session
+            try {
+              const created = await createSession({ threadId: targetId });
+              chosenId = created.session_id;
+            } catch (registerError) {
+              // 已注册（并发/上次注册成功但列表未刷）→ 以既有 thread 作为 current
+              chosenId = targetId;
+            }
+          } else {
+            chosenId = targetId;
           }
-        : null;
-      const nextLatestTurn = {
-        ...latestTurn,
-        events: session.events,
-        files: session.files,
-        isRunning: session.isRunning,
-        result: session.result,
-        taskStatus: sessionStatus
-      };
+        } else {
+          // 无任何 thread：创建默认 Session
+          const created = await createSession();
+          chosenId = created.session_id;
+        }
+        if (chosenId) {
+          storeThreadId(chosenId);
+          setCurrentSessionId(chosenId);
+        }
+        // 统一以最新列表收尾（无论注册/创建成功与否），保证 current 一定在 sessions 中
+        const fresh = await listSessions({ includeArchived: true });
+        if (disposed) {
+          return;
+        }
+        setSessions(fresh.sessions);
+      } catch (error) {
+        if (!disposed) {
+          setBootError(error instanceof Error ? error.message : "初始化会话失败");
+        }
+      } finally {
+        if (!disposed) {
+          setBooting(false);
+          setSessionsLoading(false);
+        }
+      }
+    }
 
-      return [...previous.slice(0, -1), nextLatestTurn];
-    });
-  }, [
-    session.events,
-    session.files,
-    session.isRunning,
-    session.result,
-    session.taskStatus
-  ]);
+    void boot();
+    return () => {
+      disposed = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
+  // currentSessionId / sessions 变化时同步 currentMeta（找不到则保留旧值，避免 workspace 闪失）
   useEffect(() => {
-    const streamNode = streamRef.current;
-    if (!streamNode) {
+    if (!currentSessionId) {
+      setCurrentMeta(null);
       return;
     }
+    const found = sessions.find((item) => item.session_id === currentSessionId);
+    if (found) {
+      setCurrentMeta(found);
+    }
+  }, [currentSessionId, sessions]);
 
-    window.requestAnimationFrame(() => {
-      streamNode.scrollTo({
-        top: streamNode.scrollHeight,
-        behavior: "smooth"
-      });
+  const currentSessionIdRef = useRef<string | null>(null);
+  currentSessionIdRef.current = currentSessionId;
+
+  function handleRuntimeSnapshot(sessionId: string, snapshot: SessionRuntimeSnapshot) {
+    // 只接受"当前 session"的快照：切换后旧 workspace 卸载，A 的运行时数据不得残留到 B
+    if (sessionId !== currentSessionIdRef.current) {
+      return;
+    }
+    setRuntime(snapshot);
+  }
+
+  const handleSwitchSession = useCallback(
+    (sessionId: string) => {
+      if (sessionId === currentSessionId) {
+        return;
+      }
+      storeThreadId(sessionId);
+      setCurrentSessionId(sessionId);
+      // 清空上一 session 的运行态快照，避免 A 状态短暂显示在 B 侧栏
+      setRuntime(null);
+    },
+    [currentSessionId]
+  );
+
+  const handleCreateSession = useCallback(async () => {
+    try {
+      const created = await createSession();
+      storeThreadId(created.session_id);
+      setSessions((previous) => [
+        created,
+        ...previous.filter((item) => item.session_id !== created.session_id)
+      ]);
+      setCurrentSessionId(created.session_id);
+      setRuntime(null);
+      void refreshSessions();
+      message.success("已创建新会话");
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "创建会话失败");
+    }
+  }, [message, refreshSessions]);
+
+  const handleArchiveSession = useCallback(
+    async (sessionId: string) => {
+      try {
+        const response = await archiveSession(sessionId);
+        if (!response.already_archived) {
+          patchSessionStatus(sessionId, "archived");
+          message.success("会话已归档");
+        }
+        void refreshSessions();
+      } catch (error) {
+        // 409：会话存在运行中的任务，需先取消；其余错误原样呈现
+        message.error(error instanceof Error ? error.message : "归档会话失败");
+      }
+    },
+    [message, refreshSessions]
+  );
+
+  const handleRestoreSession = useCallback(
+    async (sessionId: string) => {
+      try {
+        const response = await restoreSession(sessionId);
+        if (!response.already_active) {
+          patchSessionStatus(sessionId, "active");
+          message.success("会话已恢复");
+        }
+        void refreshSessions();
+      } catch (error) {
+        message.error(error instanceof Error ? error.message : "恢复会话失败");
+      }
+    },
+    [message, refreshSessions]
+  );
+
+  const handleTurnsChange = useCallback((sessionId: string, turns: ChatTurn[]) => {
+    setTurnsBySession((previous) => {
+      const next = { ...previous };
+      if (turns.length === 0) {
+        delete next[sessionId];
+      } else {
+        next[sessionId] = turns;
+      }
+      return next;
     });
-  }, [turns]);
+  }, []);
 
-  async function handleSubmit() {
-    const cleanQuery = query.trim();
-    if (!cleanQuery) {
-      message.warning("请输入研搜任务");
-      return;
-    }
-
-    const nextTurn = createTurn(cleanQuery);
-    setTurns((previous) => [...previous, nextTurn]);
-    setQuery("");
-
-    try {
-      await session.submitTask(cleanQuery);
-      message.success("任务已启动，执行过程会显示在对话中");
-    } catch (error) {
-      setTurns((previous) =>
-        previous.map((turn) =>
-          turn.id === nextTurn.id
-            ? {
-                ...turn,
-                isRunning: false,
-                result: error instanceof Error ? error.message : "任务启动失败"
-              }
-            : turn
-        )
-      );
-      message.error(error instanceof Error ? error.message : "任务启动失败");
-    }
-  }
-
-  async function handleCancel() {
-    try {
-      const response = await session.cancelCurrentTask();
-      message.info(response.status === "cancelling" ? "取消请求已发送，正在等待当前调用结束" : "任务已取消");
-    } catch (error) {
-      message.error(error instanceof Error ? error.message : "取消任务失败");
-    }
-  }
-
-  async function handleUpload(items: UploadedItem[]) {
-    try {
-      const response = await session.uploadFiles(items);
-      setStagedItems([]);
-      message.success(`已上传 ${response.files.length} 个文件`);
-    } catch (error) {
-      message.error(error instanceof Error ? error.message : "上传失败");
-    }
-  }
-
-  function handleNewSession() {
-    session.resetSession();
-    setTurns([]);
-    setQuery("");
-    setStagedItems([]);
-  }
-
-  const online = session.connectionState === "connected";
-
-  return (
-    <div className="chat-app-shell min-h-dvh">
-      <aside className="chat-sidebar" aria-label="会话信息">
-        <div className="sidebar-brand">
+  if (booting) {
+    return (
+      <div className="chat-app-shell min-h-dvh">
+        <main className="chat-main chat-main--center">
           <span className="panel-kicker">DEEPSEARCH</span>
-          <h1>深度研搜</h1>
-          <p>对话式多智能体研究台</p>
-        </div>
+          <p className="boot-status">正在恢复会话…</p>
+        </main>
+      </div>
+    );
+  }
 
-        <Button className="new-chat-button" block onClick={handleNewSession}>
-          新建研搜
-        </Button>
-
-        <div className="sidebar-section">
-          <span className="sidebar-label">THREAD</span>
-          <strong className="thread-id" title={session.threadId}>
-            {session.threadId.slice(0, 8)}
-          </strong>
-        </div>
-
-        <div className="sidebar-status-list">
-          <div className={`sidebar-status ${online ? "sidebar-status--online" : "sidebar-status--warn"}`}>
-            <ApiOutlined aria-hidden />
-            <span>WebSocket</span>
-            <strong>{connectionLabel(session.connectionState)}</strong>
-          </div>
-          <div className="sidebar-status">
-            <BranchesOutlined aria-hidden />
-            <span>助手调度</span>
-            <strong>{session.stats.assistantEvents}</strong>
-          </div>
-          <div className="sidebar-status">
-            <ToolOutlined aria-hidden />
-            <span>工具调用</span>
-            <strong>{session.stats.toolEvents}</strong>
-          </div>
-          <div className={session.stats.errorEvents > 0 ? "sidebar-status sidebar-status--error" : "sidebar-status"}>
-            <CloseCircleOutlined aria-hidden />
-            <span>异常</span>
-            <strong>{session.stats.errorEvents}</strong>
-          </div>
-        </div>
-
-        <div className="sidebar-section">
-          <span className="sidebar-label">AGENTS</span>
-          <ul className="agent-mini-list">
-            <li>
-              <CloudServerOutlined aria-hidden />
-              网络搜索助手
-            </li>
-            <li>
-              <DatabaseOutlined aria-hidden />
-              数据库查询助手
-            </li>
-            <li>
-              <FileSearchOutlined aria-hidden />
-              RAGFlow 助手
-            </li>
-          </ul>
-        </div>
-
-        <div className="sidebar-section sidebar-endpoints">
-          <span className="sidebar-label">ENDPOINTS</span>
-          <code>{API_BASE_URL}</code>
-          <code>{WS_BASE_URL}</code>
-        </div>
-      </aside>
-
-      <main className="chat-main">
-        <header className="chat-topbar">
-          <div>
-            <span className="panel-kicker">CHAT WORKSPACE</span>
-            <h2>深度研搜对话</h2>
-          </div>
-          <div className={`run-indicator ${session.isRunning ? "run-indicator--live" : ""}`}>
-            {session.isRunning ? <BranchesOutlined aria-hidden /> : <CheckCircleOutlined aria-hidden />}
-            {session.isRunning ? "研搜中" : "待命"}
-          </div>
-        </header>
-
-        {session.lastError ? (
+  if (bootError) {
+    return (
+      <div className="chat-app-shell min-h-dvh">
+        <main className="chat-main chat-main--center">
           <Alert
             className="chat-alert"
-            message={session.lastError}
+            message={bootError}
             showIcon
             type="error"
           />
-        ) : null}
+          <p className="boot-status">
+            无法连接后端服务，请确认 FastAPI 已启动（默认 http://localhost:8000）。
+          </p>
+        </main>
+      </div>
+    );
+  }
 
-        <section className="chat-stream-panel" ref={streamRef}>
-          <ConversationThread
-            onUseExample={setQuery}
-            turns={turns}
-          />
-        </section>
-
-        <ChatComposer
-          isCancelling={session.isCancelling}
-          isRunning={session.isRunning}
-          isUploading={session.isUploading}
-          onCancel={handleCancel}
-          onNewSession={handleNewSession}
-          onQueryChange={setQuery}
-          onStagedItemsChange={setStagedItems}
-          onSubmit={handleSubmit}
-          onUpload={handleUpload}
-          query={query}
-          stagedItems={stagedItems}
-          uploadedItems={session.uploadedItems}
+  return (
+    <div className="chat-app-shell min-h-dvh">
+      <SessionSidebar
+        currentSessionId={currentSessionId}
+        onCreateSession={() => {
+          void handleCreateSession();
+        }}
+        onArchiveSession={(sessionId) => {
+          void handleArchiveSession(sessionId);
+        }}
+        onRestoreSession={(sessionId) => {
+          void handleRestoreSession(sessionId);
+        }}
+        onRetrySessions={() => {
+          void refreshSessions();
+        }}
+        onSwitchSession={handleSwitchSession}
+        runtime={runtime}
+        sessions={sessions}
+        sessionsError={sessionsError}
+        sessionsLoading={sessionsLoading}
+      />
+      {currentSessionId && currentMeta ? (
+        <SessionWorkspace
+          currentSessionMeta={currentMeta}
+          initialTurns={turnsBySession[currentSessionId] ?? []}
+          key={currentSessionId}
+          onCreateSession={() => {
+            void handleCreateSession();
+          }}
+          onRestoreSession={(sessionId) => {
+            void handleRestoreSession(sessionId);
+          }}
+          onRuntimeSnapshot={handleRuntimeSnapshot}
+          onSwitchSession={handleSwitchSession}
+          onTurnsChange={handleTurnsChange}
+          sessionId={currentSessionId}
+          sessionStatus={currentMeta.status}
+          sessions={sessions}
         />
-      </main>
+      ) : null}
     </div>
   );
 }

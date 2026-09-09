@@ -1817,3 +1817,97 @@ textarea {
     display: none;
   }
 }
+
+/* ==========================================================================
+   Multi-Session FE additive styles (Session Sidebar / TaskHistory / archived /
+   mobile switcher). APPENDED ONLY — no existing rule modified.
+   All tokens come from :root (styles.css top). Written as UTF-8.
+   ========================================================================== */
+
+/* ---- SESSIONS sidebar section (reuses .sidebar-section vocabulary) ---- */
+.session-section { display:flex; flex-direction:column; gap:10px; padding:12px; }
+.session-section-head { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.session-section-meta { color:var(--muted); font-family:"JetBrains Mono","SFMono-Regular",Consolas,monospace; font-size:11px; }
+.session-error { display:flex; align-items:center; justify-content:space-between; gap:8px; color:var(--red); font-size:12px; line-height:1.6; }
+.session-error button { flex:none; border:1px solid rgba(255,92,122,.34); border-radius:8px; background:rgba(255,92,122,.08); color:var(--red); padding:4px 10px; font:inherit; font-size:12px; cursor:pointer; }
+.session-error button:hover, .session-error button:focus-visible { border-color:rgba(255,92,122,.62); background:rgba(255,92,122,.16); outline:none; }
+.session-empty { color:var(--muted); font-size:12px; line-height:1.7; }
+.session-list { display:grid; gap:8px; margin:0; padding:0; list-style:none; max-height:38vh; overflow-y:auto; scrollbar-color:rgba(32,214,255,.36) transparent; scrollbar-width:thin; }
+.session-item { position:relative; display:flex; align-items:center; gap:6px; border:1px solid rgba(255,255,255,.08); border-radius:8px; background:rgba(255,255,255,.035); transition:transform 180ms ease,border-color 180ms ease,background 180ms ease; }
+.session-item--active { border-color:rgba(32,214,255,.34); background:rgba(32,214,255,.08); }
+.session-item--archived { opacity:.72; }
+.session-item-main { flex:1; min-width:0; display:grid; gap:3px; border:0; background:transparent; color:inherit; padding:9px 10px; text-align:left; cursor:pointer; font:inherit; }
+.session-item:hover, .session-item:focus-within { border-color:rgba(32,214,255,.42); background:rgba(32,214,255,.1); transform:translateY(-1px); }
+.session-item-main:focus-visible { outline:none; }
+.session-item-title { display:flex; align-items:center; gap:8px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--text); font-size:14px; }
+.session-item-meta { display:flex; align-items:center; gap:8px; min-width:0; color:var(--muted); }
+.session-item-meta code, .session-item-meta time { font-family:"JetBrains Mono","SFMono-Regular",Consolas,monospace; font-size:11px; }
+.session-item-meta em { flex:none; border-radius:999px; border:1px solid rgba(93,255,159,.3); background:rgba(93,255,159,.08); color:var(--green); font-size:10px; font-style:normal; font-weight:700; padding:1px 7px; }
+.session-item--archived .session-item-meta em { border-color:rgba(255,255,255,.14); background:transparent; color:var(--muted); }
+.session-running-dot { flex:none; width:7px; height:7px; border-radius:999px; background:var(--green); box-shadow:0 0 8px rgba(93,255,159,.6); }
+.session-item-actions { flex:none; display:flex; align-items:center; gap:2px; padding-right:6px; }
+.session-action { border:0 !important; background:transparent !important; }
+.session-archived-group { display:grid; gap:8px; border-top:1px solid rgba(255,255,255,.08); padding-top:10px; }
+.session-archived-label { font-size:10px; }
+
+/* ---- current-session info block (reuses .thread-id big text) ---- */
+.session-detail { display:grid; gap:6px; }
+.session-detail-status { align-self:flex-start; border-radius:999px; border:1px solid rgba(32,214,255,.34); background:rgba(32,214,255,.08); color:var(--cyan); font-family:"JetBrains Mono","SFMono-Regular",Consolas,monospace; font-size:10px; font-weight:700; padding:1px 8px; }
+.session-detail-status--archived { border-color:rgba(255,255,255,.14); background:rgba(255,255,255,.04); color:var(--muted); }
+
+/* ---- topbar additions: current-session tag + mobile switcher ---- */
+.chat-topbar-copy { min-width:0; }
+.chat-topbar-session { display:inline-block; margin-top:4px; color:var(--muted); font-family:"JetBrains Mono","SFMono-Regular",Consolas,monospace; font-size:11px; }
+.chat-topbar-actions { display:flex; align-items:center; gap:10px; flex:none; }
+.session-switcher { min-width:180px; }
+.session-switcher--mobile { display:none; }
+
+/* ---- archived notice (neutral info, not an error) ---- */
+.archived-notice { display:grid; gap:6px; border:1px solid rgba(255,255,255,.09); border-radius:8px; background:rgba(255,255,255,.035); padding:12px 14px; margin-bottom:16px; }
+.archived-notice p { margin:0; color:var(--muted); font-size:13px; line-height:1.7; }
+.archived-notice button { border:0; background:transparent; color:var(--cyan); padding:0 2px; font:inherit; cursor:pointer; text-decoration:underline; text-underline-offset:2px; }
+.archived-notice button:hover, .archived-notice button:focus-visible { color:var(--green); outline:none; }
+.archived-empty p { color:var(--muted); font-size:14px; line-height:1.7; }
+
+/* ---- TaskHistory (durable task summary view) ---- */
+.task-history { display:grid; gap:14px; }
+.task-history-head { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.task-history-head strong { color:var(--cyan); font-family:"JetBrains Mono","SFMono-Regular",Consolas,monospace; font-size:14px; }
+.task-history-list { display:grid; gap:8px; margin:0; padding:0; list-style:none; }
+.task-history-item { display:grid; grid-template-columns:34px minmax(0,1fr); align-items:start; gap:10px; border:1px solid rgba(255,255,255,.08); border-radius:8px; background:rgba(255,255,255,.035); padding:10px 12px; }
+.task-history-icon { display:grid; place-items:center; width:34px; height:34px; color:var(--cyan); border:1px solid rgba(32,214,255,.24); border-radius:8px; background:rgba(32,214,255,.08); font-size:16px; }
+.task-history-item--running .task-history-icon { color:var(--green); border-color:rgba(93,255,159,.34); background:rgba(93,255,159,.08); }
+.task-history-item--completed .task-history-icon { color:var(--green); border-color:rgba(93,255,159,.34); background:rgba(93,255,159,.08); }
+.task-history-item--failed .task-history-icon, .task-history-item--timed_out .task-history-icon,
+.task-history-item--budget_exceeded .task-history-icon, .task-history-item--aborted .task-history-icon,
+.task-history-item--orphan_reclaimed .task-history-icon, .task-history-item--superseded .task-history-icon { color:var(--red); border-color:rgba(255,92,122,.34); background:rgba(255,92,122,.08); }
+.task-history-item--cancelled .task-history-icon { color:var(--amber); border-color:rgba(255,200,87,.34); background:rgba(255,200,87,.08); }
+.task-history-copy { display:grid; gap:5px; min-width:0; }
+.task-history-title { display:flex; align-items:baseline; justify-content:space-between; gap:10px; min-width:0; }
+.task-history-title strong { color:var(--text); font-size:14px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.task-history-title code { flex:none; color:var(--muted); font-family:"JetBrains Mono","SFMono-Regular",Consolas,monospace; font-size:11px; }
+.task-history-meta { display:flex; align-items:center; gap:10px; color:var(--muted); font-family:"JetBrains Mono","SFMono-Regular",Consolas,monospace; font-size:11px; }
+.task-history-meta span { color:var(--cyan); font-weight:700; }
+.task-history-item--running .task-history-meta span { color:var(--green); }
+.task-history-item--failed .task-history-meta span, .task-history-item--timed_out .task-history-meta span,
+.task-history-item--budget_exceeded .task-history-meta span, .task-history-item--aborted .task-history-meta span,
+.task-history-item--orphan_reclaimed .task-history-meta span, .task-history-item--superseded .task-history-meta span { color:var(--red); }
+.task-history-item--cancelled .task-history-meta span { color:var(--amber); }
+.task-history-note { display:flex; align-items:center; gap:8px; color:var(--muted); font-size:12px; line-height:1.6; }
+.task-history--loading .task-history-note { justify-content:center; padding:18px 0; }
+
+/* ---- boot / backend-unreachable centered state ---- */
+.chat-main--center { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; padding-bottom:80px; }
+.boot-status { color:var(--muted); font-family:"JetBrains Mono","SFMono-Regular",Consolas,monospace; font-size:13px; }
+
+/* ---- <=980px: sidebar hidden, topbar gets session switcher Select ---- */
+@media (max-width: 980px) {
+  .session-switcher--mobile { display:inline-flex; }
+  .chat-topbar { flex-wrap:wrap; row-gap:8px; }
+}
+@media (max-width: 560px) {
+  .session-switcher { flex:1 1 auto; min-width:0; width:auto; }
+  .chat-topbar-actions { width:100%; justify-content:space-between; align-items:center; }
+  .run-indicator { white-space:nowrap; }
+  .session-item-actions { display:none; }
+}
