@@ -35,6 +35,7 @@ from app.runtime.governance.controller import (
     GovernanceController,
     get_controller as get_governance_controller,
 )
+from app.runtime.governance.policy import PolicyValidationError
 from app.session import service as session_service
 from app.utils.session_id import (
     InvalidThreadIdError,
@@ -291,9 +292,13 @@ async def run_task(request: TaskRequest):
     # 同一 thread_id 只保留一个活跃任务：先收敛旧任务（治理任务走冻结 funnel），
     # 再启动新任务，避免并发写同一会话目录。（AC2 正式 superseded 语义留后续 API Step）
     ctl = _require_governance()
-    record, task = await _start_governed_task(
-        ctl, thread_id=thread_id, query=request.query, policy=request.policy
-    )
+    try:
+        record, task = await _start_governed_task(
+            ctl, thread_id=thread_id, query=request.query, policy=request.policy
+        )
+    except PolicyValidationError as exc:
+        # P2-1（D-Phase2-P2-1-001）：非法 policy fail-closed，任务不启动（客户端错误）
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return {
         "status": "started",
@@ -457,6 +462,9 @@ async def create_session_task_api(session_id: str, request: SessionTaskCreateReq
             policy=request.policy,
             precondition=_recheck_active,
         )
+    except PolicyValidationError as exc:
+        # P2-1（D-Phase2-P2-1-001）：非法 policy fail-closed，任务不启动（客户端错误）
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
         raise _map_session_error(exc) from exc
     return {

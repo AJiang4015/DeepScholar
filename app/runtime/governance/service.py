@@ -6,6 +6,13 @@
 - query：task 详情 / 列表（read-only）；
 - TaskRecord 是 terminal truth；event 仅 observation。
 
+P2-1（D-Phase2-P2-1-001）：submit 为生产提交唯一 normalize 收敛点 —— policy 缺省
+（None/{}）时注入 DEFAULT_GOVERNED_POLICY，使所有经本函数的任务恒走
+controller.execute 的 governed 路径（watchdog/budget/terminal event 常开）；
+非法 policy（PolicyValidationError）fail-closed 拒绝，任务不启动。
+bare execution（controller.execute(policy=None)）语义保留，仅限 unit test / local
+debugging / internal development（本函数不会落入 bare）。
+
 run_deep_agent 延迟解析：避免 import 期拉入 deepagents/llm（无凭据环境也能导入本模块）；
 测试可替换模块属性 `run_deep_agent` 注入受控替身。
 """
@@ -20,6 +27,7 @@ from app.runtime.governance import events as gov_events
 from app.runtime.governance import store as gov_store
 from app.runtime.governance.controller import GovernanceController
 from app.runtime.governance.models import TaskRecord
+from app.runtime.governance.policy import normalize_policy
 
 run_deep_agent: Any = None  # lazy：见 _ensure_run_deep_agent
 _loaded = False
@@ -46,14 +54,23 @@ def submit_task(
     query: str,
     policy: Optional[dict[str, Any]] = None,
 ) -> tuple[TaskRecord, asyncio.Task]:
-    """创建 TaskRecord + 启动 governed 执行；返回 (record, asyncio.Task)。"""
+    """创建 TaskRecord + 启动 governed 执行；返回 (record, asyncio.Task)。
+
+    P2-1（D-Phase2-P2-1-001）：policy 先经 normalize_policy —— None/{} → 注入
+    DEFAULT_GOVERNED_POLICY（生产必 governed）；显式 dict 与默认合并并做
+    fail-closed 校验（非法抛 PolicyValidationError，任务不启动）。
+    normalize 置于 runner 解析之前：非法 policy 在任何 agent 组装/导入前即被拒绝。
+    """
+    #: 默认注入 + 校验（唯一 normalize 收敛点；此后 policy 恒为完整 dict）。
+    #: 必须在 runner 解析之前：非法 policy 不应触发 agent/LLM 相关导入或组装。
+    policy = normalize_policy(policy)
     runner = run_deep_agent if run_deep_agent is not None else _ensure_run_deep_agent()
     run_id = new_run_id()
     record = controller.create_task(
         thread_id,
         run_id=run_id,
-        policy_snapshot=dict(policy or {}),
-        effective_limits=dict(policy or {}),
+        policy_snapshot=dict(policy),
+        effective_limits=dict(policy),
     )
     try:
         gov_events.lifecycle_event(

@@ -558,3 +558,40 @@ LangGraph/LangChain 依赖**。本更新推翻了原决策中"不改 uv.lock / p
 - **验证（2026-10-03，feature/multi-session-backend 分支）**：session 新套件 44 passed + PG 门控 3
   skip（无 DSN 如实 skip）；sqlite 全量回归（见 Implementation Report §10）；ruff/format/compileall
   全绿；governance 迁移清单断言更新为 0001+0002（additive 引起的期望变更）。
+
+## D-Phase2-P2-1-001 — 默认 Runtime Policy 强制化：policy=None ⇒ governed（Phase-2 P2-1）
+
+- **Status**: Accepted（2026-10，用户 Review Decision 批准 P2-1 Spec / Plan 并授权 Implementation；
+  本决策在 `feature/runtime-p2-1-policy-enforcement` 分支登记）
+- **Context**: Runtime 审计（`RUNTIME_OBSERVABILITY_AUDIT_REPORT.md`）确认：生产提交路径
+  （server → `gov_service.submit_task`）在调用方未传 policy（`TaskRequest.policy` 缺省 None、
+  前端从不发送 policy）时把 None 原样透传给 `controller.execute` → 落入 `_execute_bare`
+  （无 watchdog / 无 deadline / 无 budget / 无 terminal lifecycle event）；执行（LLM/tool/
+  checkpoint）静默挂起即永久 RUNNING（现场：任务停留「研搜中」>30 分钟、无终态无日志）。
+  `TaskRequest` 注释声称「缺省由 governance 服务默认（M-Spec §7.4）」但代码未实现（文档-代码漂移）。
+- **Decision**:
+  - **提交层默认注入**：`gov_service.submit_task` 对 `policy=None` / `{}` 注入
+    `DEFAULT_GOVERNED_POLICY`（M-Spec §7.4 冻结默认：`wall_clock_timeout=600s`、
+    `max_agent_steps=200`、`max_llm_calls=120`、`max_tool_calls=300`、`max_search_calls=40`），
+    使生产任务恒走 `controller._execute_governed`（watchdog / budget / 异常 re-raise /
+    terminal lifecycle event 常开）；`policy_snapshot` / `effective_limits` 落默认表。
+  - **bare 保留**：`controller.execute(policy=None)` 的 Step2 bare 语义不变，仅限 unit test /
+    local debugging / internal development；生产禁止 bare 由提交层（唯一 normalize 收敛点）保证。
+  - **fail-closed 校验**：显式 policy 中 `max_*` 必须 ≥0 int、`wall_clock_timeout` 必须 >0
+    （禁止传 0 关闭 watchdog 逃逸治理），非法 → `PolicyValidationError`（HTTP 400，任务不启动）。
+  - **默认值不调参**：P2-1 不改默认 policy 语义；env 覆盖（`RUNTIME_WALL_CLOCK_TIMEOUT` 等）归
+    P2-2 决策 `D-Phase2-P2-2-002`。
+- **Alternatives**: `controller.execute` 内做防御性默认（改变冻结 execute 语义、直调也被悄悄
+  governed，拒）；server 各端点逐处注入（多入口漂移，拒）；不修复（永久 RUNNING 保留，拒）。
+- **Consequences**: 生产任务不再可能「无任何外部干预而永久 running」；agent 异常不再被吞成
+  completed（governance-active re-raise → `failed(agent_failure)`）；TaskRecord
+  `policy_snapshot/effective_limits` 从空变为默认表；terminal lifecycle event 对全部生产任务
+  可见；超过默认 600s 的合法长任务将被 `timed_out` 终态化（显式 policy 可覆盖；调参归后续
+  Runtime Policy Tuning，非本批）。
+- **Constraints Created**: 生产提交必须经 `gov_service.submit_task`（唯一注入点）；默认表单一
+  来源（`app/runtime/governance/policy.py`，与 controller/counters 冻结常量同源并由测试锁定）；
+  不新增 schema/migration；不动 TaskStatus / terminal funnel / CAS / event replay 冻结语义；
+  不修改 `app/agent/**`、`app/research/**`、frontend。
+- **Related Problems**: 无新增（审计发现，未登记 PROBLEM.md）
+- **Related Architecture**: ARCHITECTURE.md（Runtime lifecycle / governance controller /
+  server 提交接线）；`P2-1_RUNTIME_POLICY_ENFORCEMENT_SPEC.md` / `P2-1_IMPLEMENTATION_PLAN.md`
