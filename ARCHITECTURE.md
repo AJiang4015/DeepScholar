@@ -29,6 +29,7 @@
 | app/utils | 无业务语义的通用工具：路径解析、Markdown→PDF 底层转换 | path_utils.py、word_converter.py |
 | app/runtime | Checkpoint 运行时层：backend 抽象工厂（`AGENT_CHECKPOINT_BACKEND`=sqlite(缺省,官方 AsyncSqliteSaver)/postgres(官方 AsyncPostgresSaver + AsyncConnectionPool，pool 由 server lifespan 注入)；进程级单例 + loop 亲和、官方 setup() 自管 checkpoint 表族、DB 不可用 fail-fast）；无业务语义，无 app 内依赖 | checkpoint.py |
 | app/research | Research Data Plane（F1+F2）：ResearchRun/SubQuestion/SearchQuery/Source/Evidence（F1）+ Claim/ClaimEvidence/Citation 与 validator R1–R10（F2，0002）；F3 semantic verification（0003 verifications）；F4 conflict detection（0004 conflicts，pair 粒度 + genuine/type invariant）；F5 corroboration（0005 corroborations，claim 作用域 global clustering + 独立性计量，只计量不裁决）；F6 reconciliation（0006 reconciliations，conflict fact + independence signal → claim-level conflict state / contested register，解释/登记不裁决）；F7 research bridge（app/research/bridge.py + extractor.py：真实 run terminal finalization 物化 candidate claims、orchestrate F2–F6、run-level research state；main_agent 唯一接线点，fail-open；不改 Agent-visible context）；RESEARCH_STORE=sqlite(缺省)/postgres/disabled；research_* 表族版本化迁移（0001–0006，F7 无新迁移）；validator 纯只读；verification/detector/review 均 fail-open 或受控（real-LLM 须显式启用，不进自动化 Gate）；呈现编号 [n] 不落库；**不依赖 app/agent**，与 checkpoint 逻辑解耦 | research/*、db/migrations/ |
+| app/research（② Research Intelligence / Execution + eval；原 F9-P0） | 与上一条目同一目录内的**智能执行层**（非数据面）：projection（只读投影）/ gaps（确定性缺口信号）/ judge（LLM 语义判断）/ plan（validated follow-up plan + dedup）/ targeted（定向研究执行 + 增量 F3 验证）/ orchestrator（**业务研究编排**：单 F8 governed execution 内编排 round0 → Projection → Gap → Judge → Plan → Targeted → Stopping → Final Synthesis → F7 once；**不拥有 lifecycle / budget / cancellation / timeout / terminal authority** —— F8 Controller 仍唯一权威；不新建第二 Runtime/Controller/task；research_round 是编排计数）；eval/（Research Intelligence 确定性行为质量验证与校准：world/agents/harness/rubric/scenarios/calibration）。依赖边界见 §3：智能层允许依赖 app/runtime/governance（受治理 LLM/上下文契约）；默认 seam 仅 lazy import app.agent.main_agent / app.tools.tavily_tool / app.api.monitor。 | projection.py、gaps.py、judge.py、plan.py、targeted.py、orchestrator.py、eval/ |
 | app/ragflow | RAGFlow 配置加载与调用示例 | rag_config.py、knowledge_demo.py |
 | app/prompt | 提示词配置（主智能体 + 三个子智能体） | prompts.yml |
 
@@ -43,7 +44,8 @@ app/api/server        → app/agent/main_agent
 app/agent/main_agent  → agent/llm、agent/prompts、agent/subagents/*、tools/*、api/context、api/monitor、runtime/checkpoint、research/*
 app/agent/subagents/* → tools/*、agent/prompts
 app/tools/*           → api/context、api/monitor、utils/*、ragflow/rag_config、research/*
-app/research/*        → 无 app 内依赖（stdlib + pydantic；psycopg 惰性 import）；不依赖 app/agent
+app/research（Data/Evidence Plane 核心模块）→ 无 app 内依赖（stdlib + pydantic；psycopg 惰性 import）；不依赖 app/agent
+app/research（Research Intelligence/Execution + eval）→ 允许依赖 app/runtime/governance（GovernanceExecution · make_handler · counters；F8 control 信号原样传播，不吞）；默认 seam 仅 lazy import app.agent.main_agent / app.tools.tavily_tool / app.api.monitor；不拥有 Runtime governance 权威
 app/utils/*           → 不依赖任何 app 内模块（纯函数 + 三方库）
 app/runtime/checkpoint → 无 app 内依赖（stdlib + langgraph / langgraph-checkpoint / langgraph-checkpoint-sqlite / langgraph-checkpoint-postgres；aiosqlite/psycopg/psycopg-pool 惰性 import）
 app/api/context       → 无（contextvars 标准库）
@@ -58,13 +60,15 @@ MUST NOT：
 - 不得绕过 `run_deep_agent` 直接调用 `main_agent.astream`（会破坏会话目录初始化与 ContextVar 设置）。
 - **F9 governed orchestrator 例外（2026-09-29，Batch6 Decision/Plan；范围收紧）**：F9-scoped 例外**只**
   允许绕过 `run_deep_agent` 的"生命周期 + F7 wrapper"，**不允许变成裸 `main_agent.astream()`**——
-  F9 orchestrator（`app/f9/orchestrator.py`）在同一 F8 `Controller.execute` 内每次 graph invocation
+  F9 orchestrator（`app/research/orchestrator.py`）在同一 F8 `Controller.execute` 内每次 graph invocation
   必须完成与既有 governed execution 等价的 glue/context 注入：governance callback、recursion
   limit、research context、session/thread context、run_id、task_id、monitor context、
   cancellation/timeout 语义与必要 agent config；且保持同一 Controller.execute /
   GovernanceExecution / BudgetCounter / deadline·cancel / ResearchRun（不新建）、不触发 F7、
   不新建 Runtime/Controller/task。产品外部入口仍必须走 `run_deep_agent`（本条红线对非 F9 编排
   路径语义不变）。
+  语义澄清（2026-10-02 Semantic Module Layout）：该 orchestrator 属**业务研究编排**——本例外不授予
+  任何 lifecycle / budget / cancellation / timeout / terminal 权威；它们仍只属 F8 Controller。
 
 ## 4. 数据流（一次任务）
 

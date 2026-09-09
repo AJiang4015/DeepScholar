@@ -4,7 +4,7 @@ Batch 2 为消费 Batch 1 Projection 的纯函数（不直接访问 research DB�
 "同一逻辑+物理 state 在 PG 与 sqlite 上分别 Projection → detect_gaps 输出一致"。
 本文件在真实 PG16 上验证整链（seed → project → detect）语义等价与关键信号边界。
 
-SQLite PASS ≠ PostgreSQL PASS：语义单测在 test_f9_gaps.py。
+SQLite PASS ≠ PostgreSQL PASS：语义单测在 test_research_gaps.py。
 """
 
 from __future__ import annotations
@@ -16,10 +16,10 @@ import uuid
 
 import pytest
 
-from app.f9 import gaps as f9g
-from app.f9 import projection as f9p
+from app.research import gaps as f9g
+from app.research import projection as f9p
 from app.research import migrations, store as rstore
-from tests import _f9_helpers as h
+from tests import _research_helpers as h
 
 PG_TEST_DSN_ENV = "RESEARCH_DSN_TEST"
 

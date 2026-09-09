@@ -52,9 +52,9 @@ def _switch_research_db(d: Path):
 
 
 def _run_pair(b7_tmp, sid, *, judge_failure=False):
-    from app.f9.eval import agents as AG
-    from app.f9.eval import harness as H
-    from app.f9.eval import scenarios as SC
+    from app.research.eval import agents as AG
+    from app.research.eval import harness as H
+    from app.research.eval import scenarios as SC
 
     sc = SC.get_scenario(sid)
     gov_store, ctl = H.make_governance(b7_tmp, owner=f"sc-{sid}")
@@ -89,7 +89,7 @@ class TestScenarioRunLevel:
         assert ad.summary["rounds"] <= 2
 
     def test_s2_missing_required_targeted(self, b7_tmp):
-        from app.f9.eval import rubric as RB
+        from app.research.eval import rubric as RB
 
         sc, base, ad = _run_pair(b7_tmp, "s2_missing_required_targeted")
         assert ad.error == ""
@@ -116,7 +116,7 @@ class TestScenarioRunLevel:
         )
 
     def test_s7_near_budget_compliant(self, b7_tmp):
-        from app.f9.eval import rubric as RB
+        from app.research.eval import rubric as RB
 
         sc, base, ad = _run_pair(b7_tmp, "s7_near_budget")
         assert ad.error == ""

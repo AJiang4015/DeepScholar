@@ -7,7 +7,7 @@ required_uncovered（无 ev 无 src / 有 src 无 ev / 有 ev / 非 required）�
 fresh、independent_flag、conflicts（F4/F6 未缓解判定）、evidence_summary domain 计数、
 ProjectionError 路径、JSON 可序列化。
 
-SQLite PASS ≠ PostgreSQL PASS：跨后端语义门在 test_f9_projection_postgres.py。
+SQLite PASS ≠ PostgreSQL PASS：跨后端语义门在 test_research_projection_postgres.py。
 """
 
 from __future__ import annotations
@@ -18,9 +18,9 @@ import uuid
 
 import pytest
 
-from app.f9 import projection as f9p
+from app.research import projection as f9p
 from app.research import store as rstore
-from tests import _f9_helpers as h
+from tests import _research_helpers as h
 
 FIXED_NOW = datetime.datetime(2026, 9, 10, 0, 0, 0, tzinfo=datetime.timezone.utc)
 ISO = "2026-09-01T00:00:00+00:00"

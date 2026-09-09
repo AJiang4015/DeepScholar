@@ -45,7 +45,7 @@ def _eval_env(monkeypatch):
 
 class TestWorld:
     def test_results_for_explicit_route_only(self):
-        from app.f9.eval.world import Ev, World
+        from app.research.eval.world import Ev, World
 
         w = World(task="t", seed="s", query_to_evidence={"q": [Ev("q", "a", "c")]})
         assert len(w.results_for("q")) == 1
@@ -53,7 +53,7 @@ class TestWorld:
         assert w.results_any("unknown") == []  # 无 extra → 空
 
     def test_results_any_falls_back_to_extra(self):
-        from app.f9.eval.world import Ev, World
+        from app.research.eval.world import Ev, World
 
         w = World(
             task="t",
@@ -64,7 +64,7 @@ class TestWorld:
         assert w.results_for("anything") == []  # 初始检索无证据
 
     def test_deterministic_locator(self):
-        from app.f9.eval.world import make_locator
+        from app.research.eval.world import make_locator
 
         assert make_locator("s", 1) == make_locator("s", 1)
         assert make_locator("s", 1) != make_locator("s", 2)
@@ -72,8 +72,8 @@ class TestWorld:
 
 class TestHarnessBaseline:
     def test_baseline_deterministic_run(self, b7_tmp, monkeypatch):
-        from app.f9.eval import harness as H
-        from app.f9.eval import scenarios as SC
+        from app.research.eval import harness as H
+        from app.research.eval import scenarios as SC
 
         sc = SC.get_scenario("s1_sufficient_no_followup")
         gov_store, ctl = H.make_governance(b7_tmp, owner="t-base")
@@ -109,10 +109,10 @@ class _ResetCtx:
 
 class TestRubric:
     def test_rubric_shape_and_total(self, b7_tmp):
-        from app.f9.eval import harness as H
-        from app.f9.eval import rubric as RB
-        from app.f9.eval import scenarios as SC
-        from app.f9.eval import agents as AG
+        from app.research.eval import harness as H
+        from app.research.eval import rubric as RB
+        from app.research.eval import scenarios as SC
+        from app.research.eval import agents as AG
 
         sc = SC.get_scenario("s2_missing_required_targeted")
         gov_store, ctl = H.make_governance(b7_tmp, owner="t-rubric")

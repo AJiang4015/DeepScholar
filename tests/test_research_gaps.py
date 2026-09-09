@@ -6,7 +6,7 @@ independent/F5、freshness、budget_near 阈值与 F8 snapshot 只读、确定�
 bounded（截断+truncated 标记）、空 projection/契约违例、无副作用（DB 零写、counter 零改）、
 与 Batch 1 project() 的整链集成（sqlite）。
 
-SQLite PASS ≠ PostgreSQL PASS：跨后端语义门在 test_f9_gaps_postgres.py。
+SQLite PASS ≠ PostgreSQL PASS：跨后端语义门在 test_research_gaps_postgres.py。
 """
 
 from __future__ import annotations
@@ -17,10 +17,10 @@ import uuid
 
 import pytest
 
-from app.f9 import gaps as f9g
-from app.f9 import projection as f9p
+from app.research import gaps as f9g
+from app.research import projection as f9p
 from app.research import store as rstore
-from tests import _f9_helpers as h
+from tests import _research_helpers as h
 
 _DEFAULT_KINDS = ("llm_calls", "tool_calls", "search_calls", "agent_steps")
 

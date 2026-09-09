@@ -69,7 +69,7 @@ User Task
    ├─ Sub-agent：knowledge_base（RAGFlow）
    └─ Tools：文件读取 / Markdown / PDF
   ↓
-[Research Intelligence Layer — F9-P0（app/f9，单一 governed execution 内）]
+[Research Intelligence Layer — F9-P0（app/research，单一 governed execution 内）]
   Round 0 → Projection → Deterministic Gap → Semantic Judge → Validated Plan →
   Targeted Research → Incremental Re-verify → Stop/Continue → Final Synthesis
   失败语义：Judge/Plan 失败 → 同一 execute 内 fallback baseline（fail-open = open to baseline）

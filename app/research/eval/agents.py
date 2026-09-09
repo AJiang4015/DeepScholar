@@ -16,7 +16,7 @@ from typing import Optional
 
 from langchain_core.messages import AIMessage
 
-from app.f9.eval.world import Ev, World, ingest_search_results
+from app.research.eval.world import Ev, World, ingest_search_results
 
 
 def _u() -> str:
@@ -244,7 +244,7 @@ def make_scripted_search_tool(world: World):
     """
     from langchain_core.tools import tool as lc_tool
 
-    from app.f9.eval.world import ingest_search_results
+    from app.research.eval.world import ingest_search_results
 
     @lc_tool(description="deterministic scripted internet_search")
     def internet_search(query: str) -> str:

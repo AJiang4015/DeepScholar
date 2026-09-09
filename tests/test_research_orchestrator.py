@@ -22,7 +22,7 @@ from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.tools import tool as lc_tool
 
-from app.f9 import orchestrator as f9o
+from app.research import orchestrator as f9o
 from app.research import context as research_ctx
 from app.research import registry
 from app.research import store as rstore

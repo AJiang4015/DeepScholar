@@ -475,3 +475,40 @@ LangGraph/LangChain 依赖**。本更新推翻了原决策中"不改 uv.lock / p
 - **验证（锁定隔离环境 + 真实 PG，2026-09-12）**：F7 sqlite 19 passed + PG 4 passed；全仓 sqlite-only
   **420 passed, 34 skipped**；双 DSN **453 passed, 1 skipped**（连跑稳定）；ruff/compileall 绿；
   real-LLM extractor 受控 probe 执行（配置存在、endpoint 可达；.env key 401 → 部署环境需有效 key）。
+
+## D018 — Semantic Module Ownership Relocation：app/f9 → app/research（代码结构归属调整；非 F9 行为重设计）
+
+- **Status**: Accepted（用户 Phase 1/Readiness/Plan Review 通过并批准实施；Freeze 已批准）
+- **Context**: `app/f9/` 属 Feature/阶段编号命名（"F9-P0"），而目录应表达稳定软件领域。
+  本决策是**代码结构 ownership 调整**（semantic module ownership relocation），不是 F9 行为
+  重设计。逐文件职责盘点确认：六模块 + eval 全部属 Research 领域（数据/知识/研究编排 + 质量验证），
+  无 Agent 能力、无 Runtime governance、无 schema；生产入口零接线（仅 eval/测试消费）。
+- **Decision**:
+  - **只做 Module Relocation**：`app/f9/{projection,gaps,judge,plan,targeted,orchestrator}.py`
+    → `app/research/`；`app/f9/eval/` → `app/research/eval/`；删除 `app/f9/__init__.py`
+    （docstring 语义并入 `app/research/__init__.py`）。零行为/常量/schema/API 改动；
+    symbol（`f9_orchestrator` 等）与内部值（`CONFIG_VERSION="f9-plan-config-v1"` 等）不变。
+  - **归属裁决**：orchestrator = 业务研究编排（research/，不进 runtime/、agent/）；eval =
+    Research Intelligence 行为质量验证基础设施（research/eval/，暂不建顶层 app/eval/）。
+  - **依赖契约（Flag A）**：Research Data/Evidence Plane 核心模块维持"无 app 内依赖、不依赖
+    app/agent"；Research Intelligence/Execution + eval 允许依赖 app/runtime/governance
+    （受治理 LLM/上下文契约，F8 control 原样传播），默认 seam 仅 lazy import
+    app.agent.main_agent / app.tools.tavily_tool / app.api.monitor；
+    Runtime Controller 仍唯一拥有 lifecycle/budget/cancellation/timeout/terminal authority。
+  - 测试语义化改名 `test_f9_*` → `test_research_*`、`_f9_helpers.py` → `_research_helpers.py`；
+    历史 docs/plan、docs/spec、Batch 报告保持原状（Flag D，residual 附录列出）。
+- **Alternatives**: 机械改名 `app/research_intelligence/`（拒：新顶层编号化/重复语义）；
+  orchestrator → app/runtime/（拒：业务研究编排 ≠ Runtime governance，Principle B）；
+  eval → 顶层 app/eval/（未来 Eval 扩展到非 Research 行为时再单独决策）。
+- **Rejected Alternatives**: 修改 F9 算法/stopping/judging/planning/targeted 行为；symbol rename；
+  新增生产接线；修改 DB/config/API/WS；顺带重构其它 research 模块；重写历史文档。
+- **Consequences**: `app/` 目录表达稳定领域（Research = Data/Evidence + Intelligence/Execution +
+  eval），Feature 编号（F1–F10…）只留在 docs/spec、docs/plan 与溯源文字；生产无行为/接线变化。
+- **Constraints Created**: 未来 F10+ 代码落位必须进语义模块而非 Feature 编号目录；
+  Research Intelligence 模块新增代码须遵守 §3 依赖契约（governance 受控依赖 + lazy seam）。
+- **Related Problems**: 无新增
+- **Related Architecture**: ARCHITECTURE.md §2/§3（app/research 双子域 + 依赖分层 + orchestrator 例外路径）
+- **验证（2026-10-02，refactor/semantic-module-layout 分支）**：compileall PASS；ruff check
+  PASS（format 仅既有历史 drift，沿用 D015–D017 "format 未改"先例）；sqlite 全量 **731 passed /
+  88 skipped / 0 failed**；定向 Research/Eval/Calibration 175 passed；PG gate 无 DSN 如实 skip
+  （User Environment Gate，不伪造 81 passed）。

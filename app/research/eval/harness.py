@@ -140,7 +140,7 @@ def run_adaptive(
     """
     import asyncio
 
-    from app.f9.orchestrator import f9_orchestrator
+    from app.research.orchestrator import f9_orchestrator
     from app.runtime.governance import store as gs
     from app.runtime.governance.models import TaskStatus
 

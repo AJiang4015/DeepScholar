@@ -1,4 +1,4 @@
-"""F9-P0 Batch 1 — 测试共享 seeding helpers（非收集模块；sqlite 与 postgres 共用）。
+"""Research 测试共享 seeding helpers（非收集模块；sqlite 与 postgres 共用；源自 F9-P0 Batch 1 测试族，编号仅溯源）。
 
 全部直接 INSERT（显式 id/时间戳）以便跨后端构造**逻辑+物理完全相同**的 state，
 用于 cross-DB 顺序/语义等价断言；绕过 registry 仅限测试数据准备，不测 registry。

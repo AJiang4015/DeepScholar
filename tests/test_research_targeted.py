@@ -6,7 +6,7 @@ incremental F3（0/1/>8 candidates、deterministic ordering、5 verdict、幂等
 D-C′ GovernedRealVerifier accounting（+1 llm / +0 agent_step、无裸调）、F8 seam
 （normal/search budget）、regression（Batch1–4 + F1–F8 sqlite 另行全绿）。
 
-真实 PostgreSQL 闭环 Gate 在 tests/test_f9_targeted_postgres.py。
+真实 PostgreSQL 闭环 Gate 在 tests/test_research_targeted_postgres.py。
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.tools import tool as lc_tool
 
-from app.f9 import targeted as f9t
+from app.research import targeted as f9t
 from app.research import context as research_ctx
 from app.research import registry
 from app.research import store as rstore

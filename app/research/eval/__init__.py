@@ -1,5 +1,9 @@
 """F9-P0 Batch 7 — Eval / Behavioral Quality Validation（deterministic scripted world）。
 
+归属：app/research/eval —— Research Intelligence 行为质量验证基础设施（源于 F9-P0
+Batch 7 eval；Feature 编号已从目录命名解耦，F9-P0 仅作历史溯源）。本子包仅供
+测试/校准/报告引用。
+
 模块布局：
 - world.py     deterministic world（search/evidence 内容 + scripted 决策策略）
 - agents.py    scripted agent（baseline graph 替身）与 adaptive graph runner

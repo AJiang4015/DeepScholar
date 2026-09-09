@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from app.f9.eval.harness import (
+from app.research.eval.harness import (
     collect_cost,
     collect_research_metrics,
     required_coverage,
@@ -118,7 +118,7 @@ def evaluate_side(
 def _locators(run_id: Optional[str]) -> list[str]:
     if not run_id:
         return []
-    from app.f9.eval.harness import _get_research_store
+    from app.research.eval.harness import _get_research_store
 
     store = _get_research_store()
     rows = store.execute(
