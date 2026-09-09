@@ -89,15 +89,18 @@ def _sqlite_connect(db):
 
 class TestGovernanceStoreSqlite:
     def test_fresh_migration_0000_to_0001(self, gov_tmp):
-        """fresh DB：ensure_schema 后版本表 + 0001 存在，且两表结构齐全。"""
+        """fresh DB：ensure_schema 后版本表 + 全量迁移（0001_governance + 0002_sessions additive）存在。"""
         store, db = _fresh_store(gov_tmp)
         assert gov_migrations.applied_migration_versions(store) == []
         gov_migrations.ensure_schema(store)
-        assert gov_migrations.applied_migration_versions(store) == ["0001"]
+        assert gov_migrations.applied_migration_versions(store) == [
+            "0001",
+            "0002",
+        ]
         store.close()
 
     def test_upgrade_migration_0000_to_0001(self, gov_tmp):
-        """upgrade 验证：先建空版本表（0000 状态），再 apply 0001。"""
+        """upgrade 验证：先建空版本表（0000 状态），再 apply 全量迁移（0001+0002）。"""
         db = str(gov_tmp / "gov-upgrade.sqlite")
         conn = sqlite3.connect(db)
         conn.execute(
@@ -109,14 +112,20 @@ class TestGovernanceStoreSqlite:
         store = gov_store._GovernanceSqliteStore(db)
         assert gov_migrations.applied_migration_versions(store) == []
         gov_migrations.ensure_schema(store)
-        assert gov_migrations.applied_migration_versions(store) == ["0001"]
+        assert gov_migrations.applied_migration_versions(store) == [
+            "0001",
+            "0002",
+        ]
         store.close()
 
     def test_migration_idempotent(self, gov_tmp):
         store, _ = _fresh_store(gov_tmp)
         gov_migrations.ensure_schema(store)
         gov_migrations.ensure_schema(store)  # 幂等
-        assert gov_migrations.applied_migration_versions(store) == ["0001"]
+        assert gov_migrations.applied_migration_versions(store) == [
+            "0001",
+            "0002",
+        ]
         store.close()
 
     def test_tasks_table_columns_and_indexes(self, gov_tmp):
