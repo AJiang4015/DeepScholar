@@ -53,7 +53,8 @@ INTAKE → INSPECTION → PLAN → IMPLEMENTATION → VERIFICATION → REVIEW �
 
 ## 4. IMPLEMENTATION
 
-- **Entry Condition**：PREFLIGHT GATE 通过。
+- **Entry Condition**：PREFLIGHT GATE 通过；且（L2/L3 Feature/Batch Implementation）已处于
+  dedicated feature branch（§12.1 Branch Preflight；当前为 main/错误 branch → STOP）。
 - **Required Actions**：
   - 只做计划内改动（最小修改，见 AGENTS.md §5）。
   - 架构级改动必须先有 Decision（ARCHITECTURE.md §8 Architecture Change Gate）。
@@ -171,3 +172,86 @@ COMPLETION GATE 只能在 **VERIFICATION PASSED 且 REVIEW 通过**之后执行�
 - **User Freeze 必须**：L2/L3 在 User Review 通过后由用户显式 Freeze；Agent 不得自宣 Freeze。
 - 报告与计划分离：Implementation Plan = How（实现前评审）；Implementation Report = 实际改动
   + AC→Test→Evidence + Freeze 状态（实现后）；PROJECT_CONTEXT 只记状态指针，不复制两者内容。
+
+## 12. Git Workflow Execution（How；规则 What 见 AGENTS.md §10）
+
+> 本文件定义 **如何执行** Git Workflow；不复制 AGENTS.md §10 的 MUST 条款。
+> One Feature/Batch = One Feature Branch = One Review/Freeze = One Merge。
+> Freeze ≠ Commit ≠ Push ≠ Merge：每步独立、逐步批准。
+
+### 12.1 Before Implementation（Branch Preflight）
+
+IMPLEMENTATION（§4）开始前，INSPECTION/PLAN 完成后，除既有 PREFLIGHT GATE（§8）外执行：
+
+```text
+Current Feature/Batch:
+Workflow Level（§11）:
+Current branch:            # git branch --show-current
+Target branch:             # feature/<feature-or-batch>（L2/L3 Implementation）
+Base branch:               # 通常 main
+Approved Scope:
+Frozen modules:
+```
+
+分支决策：
+
+- **L0 / Readiness / Plan / Review-only**：产物为文档/分析，允许留在 `main`
+  （文档提交不构成 Implementation 开始）。
+- **L1**（本地 / 低风险修复）：默认也在 `main` 或当前冻结 Feature 的 branch 内完成；若该
+  Feature 已 Freeze 则开新修复 branch（AGENTS.md §10.3 Freeze 后语义）。
+- **L2 / L3 Feature/Batch Implementation**：必须在 **dedicated feature branch**；
+  当前为 `main` 或错误 branch → **STOP，不得修改代码**，先创建/切换 branch
+  （创建 branch 属 git 写操作，需用户批准：见 §12.4）。
+
+### 12.2 Implementation 阶段
+
+- Implementation 全部发生在 feature branch；每轮改动后 `git diff --check`。
+- 开发过程允许多个语义清晰的 commit（对应完整逻辑变更，如 `feat(f9-b7): …`、
+  `test(f9-b7): …`、`docs(f9-b7): …`）。
+- 不制造无意义 commit；不在未完成验证前做 "final/freeze" commit。
+
+### 12.3 Verification / Review / Freeze
+
+- VERIFICATION PASSED（§5）→ REVIEW（§6）→ Implementation Report。
+- **User Freeze**（§11.4）为技术状态裁决：表示"实现与验证通过、禁止再加功能"。
+- **Freeze 不等于 Git commit 权限**：Freeze 后仍须按 §12.4 逐项批准。
+
+### 12.4 Post-Freeze Git Flow（顺序固定、逐步批准）
+
+```text
+Freeze
+  → Commit preparation（git status / git diff --check / Git Scope Audit，见 AGENTS.md §10.6）
+  → User approval
+  → Commit（feature branch）
+  → User approval
+  → Push（feature branch）
+  → Review / approval（如远程有保护）
+  → Merge main
+  → Push main
+```
+
+- 每一步写操作（commit / push / merge / push main）都需用户**明确批准**；Agent 不得将
+  Freeze 自动解释为 commit/push/merge 授权。
+- Push/Merge 遇 branch protection / push policy / 权限限制 → **STOP 报告**，不绕过、
+  不 force-push、不偷改 remote。
+- Merge 后 main 为集成冻结基线；后续 Feature/Batch 从 main 开新 branch。
+
+### 12.5 Scope Isolation / Diff Audit（Freeze→Commit 前）
+
+Freeze 前与 commit 前执行：
+
+```text
+git status
+git diff main...<feature-branch>（或 git diff --stat / --name-status）
+git diff --check
+```
+
+确认：无 unrelated files / 无 accidental modifications / 无 frozen module modifications /
+无临时测试文件 / 无 debug artifacts / 无未批准 dependency changes / 无 generated
+secrets·config / 无 scope creep。发现越界 → **STOP**，不得通过 commit 隐藏。
+
+### 12.6 Mixed / Unowned Working Tree
+
+工作树含多 Feature/Batch 混合、无法确认归属、或历史遗留无法分类的改动 → 按
+AGENTS.md §10.5：`STOP → report → wait`；不得自行猜测/拆分/reset/stash/cherry-pick/
+重写历史。历史补登记（baseline）仅在用户显式批准下可直接在 main 提交。

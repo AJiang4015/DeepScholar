@@ -103,3 +103,104 @@ Agent 只有在同时满足以下条件时才可宣称 COMPLETE：
 ## 9. Harness 演进
 
 新增失败模式时，先判断归属（行为 → AGENTS.md；流程 → PROCESS.md；反复工程问题 → PROBLEM.md；验证 → TESTING.md；设计决策 → DECISION.md；架构约束 → ARCHITECTURE.md），再决定是否新增。发现 Harness 自身矛盾：先修复 Harness，不得继续堆规则（见 TESTING.md §9 HARNESS REVIEW）。
+
+## 10. Git Workflow Governance（normative MUST）
+
+> 行为归属：本文件定义 Agent **必须遵守**的 Git 规则（What）；执行步骤在 PROCESS.md §12
+> （How）；当前 branch / baseline / 状态只记在 PROJECT_CONTEXT.md（Where，非规范）。
+> One Feature/Batch = One Feature Branch = One Review/Freeze = One Merge。历史补登记
+> （baseline）除外——用户显式批准的 baseline registration 可直接在 main 提交。
+
+### 10.1 Branch Boundary（MUST）
+
+- `main` = **frozen integration branch**；Feature / Batch Implementation 不得直接在 `main` 上开发。
+- L2/L3 Feature/Batch Implementation 开始前，必须处于 **dedicated feature branch**
+  （推荐命名 `feature/<feature-or-batch>`，如 `feature/f9-batch7-eval`）；当前 branch 为
+  `main` 或与任务不符 → **STOP，不得修改代码**。
+- **禁止以"用户已批准本 Feature"绕过 branch boundary**：批准只授权该 Feature 的范围与
+  流程，不改变"必须在 feature branch 实施"的硬规则。
+- 若 Implementation 过程中发现需修改另一已冻结 Feature 的代码 → **STOP → 报告
+  Cross-Feature Compatibility Gap → 等待用户决定**，不得跨 branch 混改。
+
+### 10.2 Readiness / Planning 与 Implementation 的 Branch 区别
+
+- Readiness / Plan / Review-only 产物（read-only 分析、audit、readiness review、plan 文档）
+  可以留在 `main`（文档提交），**不代表 Feature Implementation 已开始**。
+- 一旦进入 Implementation（任何写代码 / 测试 / 实现的动作），必须切换到 dedicated feature
+  branch；Readiness 产物所在的 main 基线不承载实现提交。
+
+### 10.3 Lifecycle（MUST；语义逐项独立）
+
+```text
+Feature/Batch
+  → Readiness（可留 main）
+  → Implementation branch（feature/<feature-or-batch>）
+  → Spec / Plan / Review
+  → Implementation
+  → Verification
+  → User Freeze
+  → Git Scope Audit
+  → User approval
+  → Commit
+  → Push
+  → Merge main
+```
+
+- **Freeze ≠ Commit**：Freeze 是用户对实现/验证状态的技术裁决；Freeze 后不得再加功能，
+  但不自动授予 commit/push/merge 权限。
+- **Commit ≠ Push ≠ Merge**：三者是独立动作，每个都需用户明确批准（Commit Gate 见
+  §10.6；Push/Merge 见 PROCESS.md §12.4）。
+- Freeze 后发现问题：不修改本 branch 已冻结实现，进入新的 Feature/Batch（新 branch）。
+
+### 10.4 Destructive / History-Rewriting Operations（MUST NOT）
+
+除非用户**明确**指示，否则 MUST NOT：
+
+- `force-push`
+- `reset`（含 `reset --hard`）
+- `rebase`
+- `amend`
+- 丢弃 / 覆盖用户或无法确认归属的 working-tree changes
+
+### 10.5 Mixed / Unowned Working Tree（MUST）
+
+发现以下任一情况：
+
+- working tree 同时包含多个 Feature / Batch 的改动；
+- 无法确认某文件归属（属于哪个 Feature/Batch / 是否已批准）；
+- 历史遗留的 uncommitted changes 无法安全分类；
+
+必须：
+
+```text
+STOP → report → wait
+```
+
+不得自行：猜测归属、拆分、`reset`、`stash`、`cherry-pick`、重写历史、或将改动塞进
+"看起来合理"的 commit 来隐藏。
+
+### 10.6 Commit Gate（Commit 前 Git Scope Audit，MUST）
+
+Commit 前必须逐项确认：
+
+- 只包含 intended files（当前 Feature/Batch 的批准 Scope）；
+- 无 unrelated / accidental modifications；
+- 无 secrets / credentials / `.env` / 机器配置；
+- 无临时 / debug artifacts（临时测试文件、日志、探针、`_testtmp` 产物等）；
+- 无未批准 / 未 Freeze 的 implementation；
+- 无对 frozen modules / contracts（F8 / F1–F7 / Batch1–5 / 已 Freeze Batch）的意外修改；
+- `git diff --check` 通过（无 whitespace errors）；
+- tests / verification / freeze gate 已通过（证据留档，见 TESTING.md）。
+
+Commit message：语义清晰、对应一个完整逻辑变更（如 `feat(...)` / `test(...)` /
+`docs(...)` / `chore(baseline):` 等）；**禁止**无意义提交、**禁止**未验证先做
+"final/freeze" commit、**禁止** amend/rebase 事后改写已验证历史。
+
+### 10.7 Harness 自身维护例外（最小范围）
+
+- **允许**：Harness 自身治理文件的**低风险文档维护 / 规则闭环**（如 AGENTS/PROCESS/
+  PROJECT_CONTEXT 的最小文字补充、规则澄清、状态同步）可按 Harness Review（PROCESS §10）
+  在 `main` 直接提交，**不 push 或 push 另需用户批准**；前提：零产品代码、零测试改动、
+  零 frozen contract 修改、working tree 仅含被批准的 Harness 文件。
+- **不允许**：涉及 Feature/Batch Implementation、产品代码、架构实现或高风险行为的
+  Harness 变更仍必须走对应 L2/L3 feature branch workflow（§10.1–§10.6 不受本条影响）。

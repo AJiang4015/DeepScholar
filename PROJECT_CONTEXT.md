@@ -6,7 +6,7 @@
 > override AGENTS.md / PROCESS.md / ARCHITECTURE.md / TESTING.md / DECISION.md / active
 > Spec contracts.
 > 冲突处理按 AGENTS.md §1 Authority 规则：不静默选择；报告冲突；以权威文档为准。
-> 维护规则见 §12。Last updated：2026-09-22。
+> 维护规则见 §12。Last updated：2026-09-30。
 
 ---
 
@@ -28,10 +28,17 @@
   抽取 / polling·status-sync / durable round state / Claim–Evidence Graph / Redis·Kafka·
   Neo4j·VectorDB / F8·F1–F7·Batch1–5 修改 / 无关 refactor）；glue duplication = Known Risk，
   非当前 defect
-- 当前唯一 Next Action：F9-P0 **Batch 7 Readiness Review**（read-only；不进入 Implementation，
-  等待用户 Review）
-- Current Workflow Stage：**L2 · F9 Batch 7 Readiness Review 提交**——本行为瞬时状态，
-  Batch/任务结束即更新或清除；不新增规则
+- Git 状态（以实际 `git status` 为准；此处为索引快照）：`main` = **Historical Freeze
+  Baseline（commit `fdc0cdd`，已 push origin/main，working tree clean）**；Batch1–6 冻结
+  历史已登记入库（一次性 baseline registration，2026-09-30 用户批准）；无未提交改动
+- 当前唯一 Next Action：F9-P0 **Batch 7 Readiness Review 已提交（COMPLETE）**，等待用户
+  Review / Decision Closure；**Batch7 Implementation = NOT STARTED**
+- 下次 Batch7 Implementation 起：必须创建 dedicated feature branch
+  **`feature/f9-batch7-eval`**（AGENTS.md §10 / PROCESS.md §12；Readiness 文档已随
+  baseline 进 main，不在此创建 branch）
+- Current Workflow Stage：**L2 · F9 Batch 7 Readiness Review 提交 / Implementation 未开始
+  （等待用户 Review / Decision Closure）**——本行为瞬时状态，Batch/任务结束即更新或清除；
+  不新增规则
 
 > 备注：本仓库曾在用户要求下完成一轮 Harness 文档治理（新增本文件 + AGENTS/PROCESS
 > 最小更新，2026-09-22，见 `docs/plan/2026-09-22-harness-document-governance-report.md`）。
@@ -198,16 +205,19 @@ Deterministic Stopping → F7 finalization（normal 完成恰一次；F8 termina
 
 ## 11. Current Next Action
 
-> **当前唯一允许的下一步：F9-P0 Batch 7 Readiness Review（read-only）。**
+> **当前唯一允许的下一步：等待用户对 Batch7 Readiness Review / Decision Closure 的 Review。**
 > - F9-P0 Batch 1–6 均已 **PASS / FROZEN**（2026-09-22 / 09-24 / 09-26 / 09-28 / 09-29 /
->   09-30 用户正式 Freeze），实现与验证证据保留、无额外重构；
-> - 下一阶段 = **F9-P0 Batch 7 — Eval / Behavioral Quality 验证（baseline-vs-adaptive）**；
->   Batch6 Freeze 后禁止扩展（_govadapt 实现 / glue 抽取 / durable round / 图结构 / 新 infra
->   / F8·F1–F7·Batch1–5 修改 / 无关 refactor）；
-> - Batch 7 仅 Readiness Review（本批唯一交付物 = `docs/plan/2026-09-30-f9-p0-batch7-*`）；
->   不得修改代码 / F8 / F1–F7 / Batch6 implementation；遇 frozen contract 冲突 → STOP 并报
->   COMPATIBILITY GAP；
-> - 等待用户 Review / Decision Closure 后方可进入 Batch7 Implementation（未批准不实施）。
+>   09-30 用户正式 Freeze），实现与验证证据保留、无额外重构；`main` = Historical Freeze
+>   Baseline（`fdc0cdd`，已登记入库并 push）；
+> - Batch7 **Readiness = COMPLETE**（`docs/plan/2026-09-30-f9-p0-batch7-readiness-review.md`，
+>   CONDITIONAL；D1–D6 Required Decisions 待用户裁决）；**Batch7 Implementation = NOT
+>   STARTED**；
+> - 用户批准 Batch7 Readiness / Decision Closure 后，Batch7 Implementation 必须创建
+>   dedicated feature branch **`feature/f9-batch7-eval`**（Git Workflow：AGENTS.md §10 /
+>   PROCESS.md §12），不得在 `main` 上实施；
+> - 未获用户指令前：不得创建该 branch、不得开始 Batch7 Implementation、不得修改代码 /
+>   F8 / F1–F7 / Batch1–6 / 已批准 Harness 规则；遇 frozen contract 冲突 → STOP 并报
+>   COMPATIBILITY GAP。
 
 ## 12. Context Maintenance Rules
 
