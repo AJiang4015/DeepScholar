@@ -56,6 +56,15 @@ MUST NOT：
 - 任何模块不得 import `app/api/server`（server 是入口聚合层）。
 - 工具不得绕过 `app/api/context` 自行持有会话状态。
 - 不得绕过 `run_deep_agent` 直接调用 `main_agent.astream`（会破坏会话目录初始化与 ContextVar 设置）。
+- **F9 governed orchestrator 例外（2026-09-29，Batch6 Decision/Plan；范围收紧）**：F9-scoped 例外**只**
+  允许绕过 `run_deep_agent` 的"生命周期 + F7 wrapper"，**不允许变成裸 `main_agent.astream()`**——
+  F9 orchestrator（`app/f9/orchestrator.py`）在同一 F8 `Controller.execute` 内每次 graph invocation
+  必须完成与既有 governed execution 等价的 glue/context 注入：governance callback、recursion
+  limit、research context、session/thread context、run_id、task_id、monitor context、
+  cancellation/timeout 语义与必要 agent config；且保持同一 Controller.execute /
+  GovernanceExecution / BudgetCounter / deadline·cancel / ResearchRun（不新建）、不触发 F7、
+  不新建 Runtime/Controller/task。产品外部入口仍必须走 `run_deep_agent`（本条红线对非 F9 编排
+  路径语义不变）。
 
 ## 4. 数据流（一次任务）
 

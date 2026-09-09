@@ -36,11 +36,21 @@
 
 ## 3. 文档使用规则（何时读哪份文档）
 
-- 每次任务开始：读 PROCESS.md 与 PROBLEM.md（判断是否命中已登记问题；命中则必须读对应 `docs/problem/` 记录）。
+- 每次任务开始：读 `PROJECT_CONTEXT.md`（如存在；**当前状态索引，非规范来源**）、`PROCESS.md` 与 `PROBLEM.md`（判断是否命中已登记问题；命中则必须读对应 `docs/problem/` 记录）。
 - 任何修改之前：读 ARCHITECTURE.md 中与改动相关的边界与红线。
 - 改动涉及安全敏感代码（SQL 执行、文件读写、上传/下载、认证授权、外部凭据、用户可控输入）：额外读 TESTING.md §5 Security 与相关 `docs/problem/` 记录。
 - 需要做重大取舍或架构级改动：读 DECISION.md，并按要求新增 Decision。
+- 任务开始先按 PROCESS.md §11 做 **L0–L3 Task Classification**：分类只决定流程与产出形态，不改变 §1 Authority；**L0 只读、禁止实现**；实施中发现实际影响高于初判 → 按 PROCESS.md §11.3 **立即 Stop → Reclassify**，不得为保持低等级绕过流程。
 - INSPECTION 必须产出"读了什么、为什么读"的证据清单；REVIEW 若发现改动涉及与 Active Problem 无关的章节或文件 → REJECT（可验证：凭 diff 与证据清单判定）。
+
+### Document Loading Policy
+
+- **First read（每次任务开始）**：`AGENTS.md`、`PROJECT_CONTEXT.md`（如存在）、`PROCESS.md`、`PROBLEM.md`。
+- **Then selective read（按当前任务，勿全量）**：Active Problem 对应 `docs/problem/` 记录；相关的 `ARCHITECTURE.md` / `DECISION.md`（按需章节或 Dxxx）；当前 Feature 的 `docs/spec/`；当前 Batch 的 `docs/plan/`；`TESTING.md` 中相关章节。
+- **MUST NOT** 因"想了解项目背景"而默认读取全部历史：历史 `docs/plan/`、`docs/spec/`、`docs/problem/`、历史 report、历史 Decision、ROADMAP.md 等（除非当前任务确实涉及）。
+- **冲突处理**：`PROJECT_CONTEXT.md` 与权威文档冲突时——不静默选择；按 §1 Authority 规则处理；报告冲突；`PROJECT_CONTEXT.md` 不得覆盖权威文档。
+
+> `PROJECT_CONTEXT.md` is a current-state index, not a normative authority. It MUST NOT override AGENTS.md / PROCESS.md / ARCHITECTURE.md / TESTING.md / DECISION.md / active Spec contracts.
 
 ## 4. 禁止行为（MUST NOT）
 
