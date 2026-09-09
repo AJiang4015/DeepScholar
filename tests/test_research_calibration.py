@@ -42,8 +42,8 @@ def _b8_env(monkeypatch):
 
 class TestCalibrationRunner:
     def test_defaults_preserved_after_sweep(self):
-        import app.f9.gaps as f9g
-        from app.f9.eval import calibration as C
+        import app.research.gaps as f9g
+        from app.research.eval import calibration as C
 
         before = {
             "min_evidence": f9g.MIN_EVIDENCE,
@@ -62,7 +62,7 @@ class TestCalibrationRunner:
         assert all(p.ok for p in res)
 
     def test_summary_and_sensitivity_structure(self):
-        from app.f9.eval import calibration as C
+        from app.research.eval import calibration as C
 
         res = C.run_sweep(
             scenario_ids=("s2_missing_required_targeted",),
@@ -80,7 +80,7 @@ class TestCalibrationRunner:
 
     def test_min_evidence_monotonic_rounds(self):
         """s2 缺 required：ME=1 应比 ME=3 少轮/少 plan（补足成本随阈值上升）。"""
-        from app.f9.eval import calibration as C
+        from app.research.eval import calibration as C
 
         res = C.run_sweep(
             scenario_ids=("s2_missing_required_targeted",),
@@ -93,7 +93,7 @@ class TestCalibrationRunner:
 
     def test_defaults_are_pareto_acceptable(self):
         """D3：默认档不劣于邻域且 cost 合规 → 推荐保持默认（不改码）。"""
-        from app.f9.eval import calibration as C
+        from app.research.eval import calibration as C
 
         res = C.run_sweep(
             scenario_ids=(

@@ -43,7 +43,7 @@ def _seed_state(store, run_id, *, evidences=0, claims=0, ver_succeeded=0,
 class TestRubricDeterministic:
     def test_evaluate_empty_run_neutral(self, b7_tmp, monkeypatch):
         """空 run：rubric 全维度存在，required=0、citation=0、无 claim 中性。"""
-        from app.f9.eval import rubric as RB
+        from app.research.eval import rubric as RB
 
         _db(b7_tmp)
         run_id, _ = _mk_run()
@@ -55,7 +55,7 @@ class TestRubricDeterministic:
             assert 0.0 <= rb[k] <= 1.0
 
     def test_verdict_shapes(self):
-        from app.f9.eval import rubric as RB
+        from app.research.eval import rubric as RB
 
         base = {k: 0.0 for k in RB_DIMS} | {"total": 0.0, "_raw": {}}
         ad = {k: 0.0 for k in RB_DIMS} | {"total": 0.0, "_raw": {}}
@@ -66,7 +66,7 @@ class TestRubricDeterministic:
         assert "required_coverage" in v["improved_dims"]
 
     def test_no_pad_when_equal(self):
-        from app.f9.eval import rubric as RB
+        from app.research.eval import rubric as RB
 
         same = {k: 0.5 for k in RB_DIMS} | {"total": 3.5, "_raw": {}}
         v = RB.verdict(same, dict(same))

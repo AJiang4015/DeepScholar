@@ -8,7 +8,7 @@ PostgreSQL 是唯一生产基线与最终 Gate Backend；本文件在真实 PG16
   conflicts（无 rec / GENUINE_CONTESTED / 缓解 outcome / failed rec）、independent_flag、
   fresh（注入 now）、domain 计数（含 unknown_domain 桶）、budget snapshot 只读、错误路径。
 
-SQLite PASS ≠ PostgreSQL PASS；SQLite 语义单测在 test_f9_projection.py。
+SQLite PASS ≠ PostgreSQL PASS；SQLite 语义单测在 test_research_projection.py。
 """
 
 from __future__ import annotations
@@ -20,9 +20,9 @@ import uuid
 
 import pytest
 
-from app.f9 import projection as f9p
+from app.research import projection as f9p
 from app.research import migrations, store as rstore
-from tests import _f9_helpers as h
+from tests import _research_helpers as h
 
 PG_TEST_DSN_ENV = "RESEARCH_DSN_TEST"
 

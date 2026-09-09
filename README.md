@@ -114,7 +114,7 @@ flowchart TB
         TOOLS["Tools：Tavily / MySQL SQL / RAGFlow / 上传文件 / Markdown·PDF"]
     end
 
-    subgraph RI["Research Intelligence Layer（F9-P0 app/f9）"]
+    subgraph RI["Research Intelligence Layer（F9-P0 · app/research）"]
         P1["Projection（确定性只读投影）"]
         G1["Deterministic Gap Detection"]
         J1["Semantic Gap Judge（LLM，governed callback）"]
@@ -391,10 +391,13 @@ deepsearch-agents/
 │   ├── runtime/
 │   │   ├── checkpoint.py         # LangGraph checkpoint saver（sqlite/postgres 双后端）
 │   │   └── governance/           # F8：controller / counters / callbacks / events / store / models / migrations
-│   ├── research/                 # F1–F7 research plane：registry/store/schemas/provenance/
-│   │                             #   verify(F3)/conflict(F4)/corroboration(F5)/reconciliation(F6)/bridge(F7)
-│   ├── f9/                       # F9-P0 research intelligence：projection/gaps/judge/plan/
-│   │   │                         #   targeted/orchestrator
+│   ├── research/                 # Research 领域：Data/Evidence Plane（F1–F7 artifacts +
+│   │   │                         #   F2–F7 语义算法）+ Research Intelligence/Execution（原 f9）
+│   │   │                         #   + eval（行为质量验证/校准）
+│   │   ├── store.py/registry.py/schemas.py/provenance.py/…       # F1–F7 数据面
+│   │   ├── verify.py/conflict.py/corroboration.py/reconciliation.py/bridge.py/…  # 语义算法
+│   │   ├── projection.py/gaps.py/judge.py/plan.py/               # 智能执行层
+│   │   │   targeted.py/orchestrator.py
 │   │   └── eval/                 # 确定性 eval：world/agents/harness/rubric/scenarios/calibration
 │   ├── tools/                    # Tavily / MySQL / RAGFlow / 文件读取 / Markdown / PDF
 │   ├── ragflow/                  # RAGFlow 配置与示例
@@ -408,7 +411,7 @@ deepsearch-agents/
 │   ├── plan/                     # 各批次 Plan / Readiness / Implementation Report / Final Completion Report
 │   ├── images/ knowledge_base/ frontend/
 ├── frontend/                     # React + Vite 前端
-├── tests/                        # pytest（含 governance / research / f9 / PG gate 测试族）
+├── tests/                        # pytest（含 governance / research（data plane + intelligence + eval）/ PG gate 测试族）
 ├── docker/                       # docker-compose（MySQL 教学库 + PostgreSQL）
 ├── examples/                     # DeepAgents 章节示例脚本
 ├── pyproject.toml / uv.lock      # 依赖声明与锁定

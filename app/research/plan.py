@@ -254,14 +254,14 @@ def select_candidates(
     """
     signal_map: dict[str, dict[str, Any]] = {}
     for s in gap_signals.get("signals") or []:
-        from app.f9.judge import gap_id_of  # noqa: PLC0415
+        from app.research.judge import gap_id_of  # noqa: PLC0415
 
         gid = gap_id_of(s)
         if gid in signal_map:
             _fail(f"gap signals 含重复 gap_id: {gid}")
         signal_map[gid] = s
 
-    from app.f9.judge import signal_gap_ids  # noqa: PLC0415
+    from app.research.judge import signal_gap_ids  # noqa: PLC0415
 
     expected = signal_gap_ids(gap_signals)
     judged: list[tuple[dict[str, Any], int]] = []  # (judgment, input_order)
@@ -374,7 +374,7 @@ def build_plan(
     gid = proposal["gap_id"]
     if not isinstance(gid, str):
         _fail("proposal gap_id 必须为 str")
-    from app.f9.judge import gap_id_of  # noqa: PLC0415
+    from app.research.judge import gap_id_of  # noqa: PLC0415
 
     signal_map = {gap_id_of(s): s for s in (gap_signals.get("signals") or [])}
     gap = signal_map.get(gid)
@@ -516,7 +516,7 @@ def _build_proposal_messages(
     candidates: list[dict[str, Any]],
 ) -> list[Any]:
     """bounded prompt：仅 candidates（important gaps）+ 各自 semantic_need/reason + 主体上下文。"""
-    from app.f9.judge import gap_id_of  # noqa: PLC0415
+    from app.research.judge import gap_id_of  # noqa: PLC0415
 
     claim_by_id = {c["claim_id"]: c for c in (projection.get("claims") or [])}
     sq_by_id = {

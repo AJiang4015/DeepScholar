@@ -2,7 +2,7 @@
 
 Spec：docs/spec/2026-09-19-f9-p0-evidence-driven-research-loop.md Rev2 §5/§3.1
 Plan：docs/plan/2026-09-20-f9-p0-implementation-plan.md Rev2 §F/D5
-上游：F9-P0 Batch 1 Research State Projection（app/f9/projection.py，PASS/FROZEN）
+上游：F9-P0 Batch 1 Research State Projection（app/research/projection.py，PASS/FROZEN）
 
 管道（Batch 2 范围）：
 

@@ -26,8 +26,8 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 
-from app.f9 import gaps as f9g
-from app.f9 import judge as f9j
+from app.research import gaps as f9g
+from app.research import judge as f9j
 from app.runtime.governance import migrations as gov_migrations
 from app.runtime.governance import store as gov_store
 from app.runtime.governance.callbacks import GovernanceCallbackHandler
@@ -356,7 +356,7 @@ class TestJudgeGaps:
         )
 
     def test_t2_no_gap_no_llm(self):
-        from app.f9 import gaps as _g  # noqa: PLC0415
+        from app.research import gaps as _g  # noqa: PLC0415
 
         p2 = _proj(
             sub_questions=[

@@ -22,9 +22,9 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 
-from app.f9 import gaps as f9g
-from app.f9 import judge as f9j
-from app.f9 import plan as f9p
+from app.research import gaps as f9g
+from app.research import judge as f9j
+from app.research import plan as f9p
 from app.runtime.governance import migrations as gov_migrations
 from app.runtime.governance import store as gov_store
 from app.runtime.governance.context import (

@@ -23,11 +23,11 @@ import uuid
 from pathlib import Path
 from typing import Any, Optional
 
-import app.f9.gaps as _f9g
-from app.f9.eval import agents as AG
-from app.f9.eval import harness as H
-from app.f9.eval import rubric as RB
-from app.f9.eval import scenarios as SC
+import app.research.gaps as _f9g
+from app.research.eval import agents as AG
+from app.research.eval import harness as H
+from app.research.eval import rubric as RB
+from app.research.eval import scenarios as SC
 
 # 生产默认值（只读镜像，用于恢复与对照）
 DEFAULTS = {

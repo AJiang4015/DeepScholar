@@ -5,7 +5,7 @@
   binding → 增量 F3 Verification；检查 run_id 一致 / 幂等（binding+F3 fingerprint）/
   ordering 与 cap / 无跨 run 污染。Fake search tool（无网络）经 registry/ctx seam 写入 PG。
 
-SQLite PASS ≠ PostgreSQL PASS；语义单测在 test_f9_targeted.py。
+SQLite PASS ≠ PostgreSQL PASS；语义单测在 test_research_targeted.py。
 """
 
 from __future__ import annotations
@@ -17,10 +17,10 @@ import uuid
 import pytest
 from langchain_core.tools import tool as lc_tool  # noqa: E402
 
-from app.f9 import targeted as f9t
+from app.research import targeted as f9t
 from app.research import context as research_ctx
 from app.research import migrations, registry, store as rstore
-from tests import _f9_helpers as h
+from tests import _research_helpers as h
 
 PG_TEST_DSN_ENV = "RESEARCH_DSN_TEST"
 

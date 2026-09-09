@@ -12,8 +12,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from app.f9.eval.agents import ScriptedBaselineAgent
-from app.f9.eval.world import Ev, World
+from app.research.eval.agents import ScriptedBaselineAgent
+from app.research.eval.world import Ev, World
 
 SCENARIO_IDS = (
     "s1_sufficient_no_followup",
@@ -241,7 +241,7 @@ def make_baseline_agent(sc: Scenario):
                 if not evs:
                     evs = [Ev(query=q, title=f"base-{i}", content=f"base-fact-{i}")]
                 if run_id and sqid:
-                    from app.f9.eval.world import ingest_search_results
+                    from app.research.eval.world import ingest_search_results
 
                     added = ingest_search_results(run_id, sqid, q, evs)
                     self.evidence_ids.extend(added)
@@ -308,7 +308,7 @@ def make_adaptive_graph_runner_for(sc: Scenario, round0_query: Optional[str] = N
         stage = thread.split("::")[1] if "::" in thread else "unknown"
         state["stages"].append(stage)
         if stage == "round0" and q0:
-            from app.f9.eval.world import ingest_search_results
+            from app.research.eval.world import ingest_search_results
 
             from app.research import context as rctx
 
@@ -332,7 +332,7 @@ def make_adaptive_graph_runner_for(sc: Scenario, round0_query: Optional[str] = N
 def _run_locators(run_id) -> list[str]:
     if not run_id:
         return []
-    from app.f9.eval.harness import _get_research_store
+    from app.research.eval.harness import _get_research_store
 
     store = _get_research_store()
     rows = store.execute(

@@ -30,11 +30,11 @@ import asyncio
 import uuid
 from typing import Any, Awaitable, Callable, Optional
 
-from app.f9 import gaps as f9gaps
-from app.f9 import judge as f9judge
-from app.f9 import plan as f9plan
-from app.f9 import projection as f9proj
-from app.f9 import targeted as f9targeted
+from app.research import gaps as f9gaps
+from app.research import judge as f9judge
+from app.research import plan as f9plan
+from app.research import projection as f9proj
+from app.research import targeted as f9targeted
 from app.runtime.governance.context import (
     GovernanceExecution,
     get_governance_execution,
@@ -224,7 +224,7 @@ async def _run_f456_incremental(
 
 
 def _gap_signature(gaps: dict[str, Any]) -> frozenset[str]:
-    from app.f9.judge import gap_id_of  # noqa: PLC0415
+    from app.research.judge import gap_id_of  # noqa: PLC0415
 
     return frozenset(gap_id_of(s) for s in (gaps.get("signals") or []))
 

@@ -74,9 +74,9 @@ def _seed_claim_run():
 
 class TestClaimLevelScenarios:
     def test_s3_preseed_claim_gets_reverified(self, b7_tmp):
-        from app.f9.eval import agents as AG
-        from app.f9.eval import harness as H
-        from app.f9.eval import scenarios as SC
+        from app.research.eval import agents as AG
+        from app.research.eval import harness as H
+        from app.research.eval import scenarios as SC
 
         sc = SC.get_scenario("s3_unverified_claim_reverify")
         d = b7_tmp / f"a-{uuid.uuid4().hex}"
@@ -106,7 +106,7 @@ class TestClaimLevelScenarios:
 
     def test_s4_f4_compatible_on_preseed_run(self, b7_tmp):
         """S4 seam：preseed claim run 上 F4 detect_claim_conflicts 可执行（不改 state）。"""
-        from app.f9.eval import harness as H
+        from app.research.eval import harness as H
 
         d = b7_tmp / f"a4-{uuid.uuid4().hex}"
         _switch_research_db(d)
@@ -124,7 +124,7 @@ class TestClaimLevelScenarios:
 
     def test_s5_f5_compatible_on_preseed_run(self, b7_tmp):
         """S5 seam：preseed claim run 上 F5 corroboration 计算可执行且确定性。"""
-        from app.f9.eval import harness as H
+        from app.research.eval import harness as H
 
         d = b7_tmp / f"a5-{uuid.uuid4().hex}"
         _switch_research_db(d)

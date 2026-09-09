@@ -55,7 +55,9 @@
 - **Research Plane**：`app/research/`（F1–F7，独立双后端迁移 `db/migrations/0001–0006`），
   存 ResearchRun/SubQuestion/Query/Source/Evidence + Claim/…/Reconciliation artifacts；
   fail-open 写入、不与 Agent 主链路耦合。
-- **F9 orchestration plane**：`app/f9/`（新增，Batch 1 = `projection.py` 只读投影）。
+- **Research Intelligence / Execution（原 F9 orchestration plane）**：`app/research/`
+  （projection/gaps/judge/plan/targeted/orchestrator + eval/；单 governed execution 内；
+  orchestrator 只做业务研究编排，不拥有 Runtime governance 权威）。
 - **前端**：React + Vite（`frontend/`），仅经 HTTP/WS 与后端通信。
 - **外部依赖**：OpenAI 兼容 LLM / Tavily / MySQL（docker 教学库）/ RAGFlow；凭据仅 `.env`。
 
@@ -126,7 +128,7 @@ Deterministic Stopping → F7 finalization（normal 完成恰一次；F8 termina
   重构）。前批：Batch 1–5 **PASS/FROZEN**（09-22/09-24/09-26/09-28/09-29）。
 - 目标：单 F8 execute 内 round0 baseline → Projection → Gap → Judge → Plan → Targeted
   Research(+Verify) → 评估/stopping → 下一轮或终止 → Final Synthesis → F7 finalize_run
-  恰一次（`app/f9/orchestrator.py`）。
+  恰一次（`app/research/orchestrator.py`）。
 - 契约要点：D1 Option A 图调用（ARCHITECTURE §3 例外回填，范围收紧）；D2 round0 exactly-once；
   D3 round in-memory；D4 changed-claims 增量 F4→F5→F6；D5 Research Policy 临时默认；D6 Final
   Synthesis + F7 once；GLE/Cancel 不 catch；单 execute/单 run/单 BudgetCounter。
@@ -136,7 +138,7 @@ Deterministic Stopping → F7 finalization（normal 完成恰一次；F8 termina
   `docs/plan/2026-09-29-f9-p0-batch6-readiness-review.md`；Implementation Plan
   `docs/plan/2026-09-29-f9-p0-batch6-implementation-plan.md`（L3）；
   报告 `docs/plan/2026-09-29-f9-p0-batch6-implementation-report.md`。
-- 测试：`tests/test_f9_orchestrator.py`（17：flow 6 + D4 changed-only 1 + controller seam 10，
+- 测试：`tests/test_research_orchestrator.py`（17：flow 6 + D4 changed-only 1 + controller seam 10，
   含 F7-once adversarial matrix 八场景）。
 - Known limitations（保留）：真实 provider E2E 凭据受限；`_govadapt.py` DEFERRED；round
   in-memory（D3，恢复能力留未来）；glue duplication = Known Risk（Batch6 Freeze 后不修复，
