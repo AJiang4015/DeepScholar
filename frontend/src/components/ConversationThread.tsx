@@ -17,6 +17,7 @@ import {
 import { Button, Tooltip } from "antd";
 import { useEffect, useRef, useState } from "react";
 import { getDownloadUrl } from "../lib/api";
+import { statusLabel } from "../lib/taskStatus";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 import type { MonitorMessage, OutputFile } from "../types";
 
@@ -81,7 +82,7 @@ const TASK_EXAMPLES = [
   },
 ];
 
-function formatTime(value: string): string {
+export function formatTime(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
     return "--:--";
@@ -93,7 +94,7 @@ function formatTime(value: string): string {
   });
 }
 
-function formatBytes(value: number): string {
+export function formatBytes(value: number): string {
   if (value < 1024) {
     return `${value} B`;
   }
@@ -300,22 +301,6 @@ function ThinkingLoader({ durationLabel }: { durationLabel: string }) {
       </ul>
     </div>
   );
-}
-
-/** 治理终态 → 用户可读短标签（对应后端 TaskStatus / TerminalReason）。 */
-const TERMINAL_STATUS_LABELS: Record<string, string> = {
-  completed: "已完成",
-  failed: "执行失败",
-  cancelled: "已取消",
-  timed_out: "任务超时",
-  budget_exceeded: "预算超限",
-  superseded: "已被新任务取代",
-  aborted: "任务中止",
-  orphan_reclaimed: "已回收",
-};
-
-function statusLabel(status: string): string {
-  return TERMINAL_STATUS_LABELS[status] ?? `已结束（${status}）`;
 }
 
 /** 断线窗口内任务已结束、但最终文本未保留时的消息区说明。 */
