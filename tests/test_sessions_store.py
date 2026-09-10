@@ -87,6 +87,7 @@ class TestSessionMigration:
         assert sorted(gov_migrations.applied_migration_versions(gov_sqlite)) == [
             "0001",
             "0002",
+            "0003",
         ]
         rows = gov_sqlite.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='sessions'"
@@ -98,10 +99,11 @@ class TestSessionMigration:
         assert sorted(gov_migrations.applied_migration_versions(gov_sqlite)) == [
             "0001",
             "0002",
+            "0003",
         ]
 
     def test_upgrade_0001_to_0002(self, gov_tmp):
-        """已有 0001 的库（旧 governance DB）→ ensure_schema 只补 0002，不动 0001。"""
+        """已有 0001 的库（旧 governance DB）→ ensure_schema 补 0002+0003，不动 0001。"""
         store = gov_store._GovernanceSqliteStore(str(gov_tmp / "old.sqlite"))
         # 模拟旧库：0001 DDL + 版本表（runner 自建）已应用、版本记录 0001
         sql = (_MIGRATIONS_DIR / "0001_governance.sqlite.sql").read_text(
@@ -119,10 +121,11 @@ class TestSessionMigration:
                 "VALUES (%s, %s)",
                 ("0001", "2026-10-03T00:00:00+00:00"),
             )
-        gov_migrations.ensure_schema(store)  # 自动补 0002
+        gov_migrations.ensure_schema(store)  # 自动补 0002 + 0003
         assert sorted(gov_migrations.applied_migration_versions(store)) == [
             "0001",
             "0002",
+            "0003",
         ]
         store.close()
 

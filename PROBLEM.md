@@ -45,6 +45,7 @@ Candidate 不进本表；晋升为正式 Problem 时创建 `docs/problem/` 文�
 | P004 | Security | Mitigated | Medium | session_id/thread_id 未净化拼入目录 | R1 修复：thread_id 安全字符集 [A-Za-z0-9_-]{1,128}；/api/task 非法换新、/api/upload 与 WS 非法拒绝 | docs/problem/P004-session-id-path-traversal.md |
 | P005 | Security | Won't Fix | Medium | 无认证/授权边界 | 全系统无鉴权（任务/WS/上传/下载）；README 能力边界已声明为教学边界 | docs/problem/P005-no-auth-boundary.md |
 | P006 | Testing | Open | Medium | 无自动化测试基础设施 | 无 tests/、无 pytest；README 声称 tests/ 存在但与实际不符 | docs/problem/P006-no-test-infrastructure.md |
+| P007 | Runtime | Open | High | Runtime 缺少健康平面：进程退出/执行器失联后任务永久 RUNNING 且不可诊断 | 执行期无 heartbeat / stale 判定 / reclaim 路径；`orphan_reclaimed`·`aborted` 无生产产出、`flush_pending` 无调用方；由 P2-2（D-Phase2-P2-2-001~017）实现关闭 | docs/problem/P007-no-runtime-health-plane.md |
 
 > 存量问题（P001–P006 建立于 Type 字段引入之前）：Type 以本表为准；对应 `docs/problem/` detail
 > 文件内容未改动。新登记问题 MUST 在 detail 文件元数据中带 Type。

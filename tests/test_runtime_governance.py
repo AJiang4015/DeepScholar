@@ -89,18 +89,19 @@ def _sqlite_connect(db):
 
 class TestGovernanceStoreSqlite:
     def test_fresh_migration_0000_to_0001(self, gov_tmp):
-        """fresh DB：ensure_schema 后版本表 + 全量迁移（0001_governance + 0002_sessions additive）存在。"""
+        """fresh DB：ensure_schema 后版本表 + 全量迁移（0001_governance + 0002_sessions + 0003_runtime_health additive）存在。"""
         store, db = _fresh_store(gov_tmp)
         assert gov_migrations.applied_migration_versions(store) == []
         gov_migrations.ensure_schema(store)
         assert gov_migrations.applied_migration_versions(store) == [
             "0001",
             "0002",
+            "0003",
         ]
         store.close()
 
     def test_upgrade_migration_0000_to_0001(self, gov_tmp):
-        """upgrade 验证：先建空版本表（0000 状态），再 apply 全量迁移（0001+0002）。"""
+        """upgrade 验证：先建空版本表（0000 状态），再 apply 全量迁移（0001+0002+0003）。"""
         db = str(gov_tmp / "gov-upgrade.sqlite")
         conn = sqlite3.connect(db)
         conn.execute(
@@ -115,7 +116,53 @@ class TestGovernanceStoreSqlite:
         assert gov_migrations.applied_migration_versions(store) == [
             "0001",
             "0002",
+            "0003",
         ]
+        store.close()
+
+    def test_upgrade_0002_to_0003(self, gov_tmp):
+        """upgrade 验证：已有 0001+0002 的库（P2-2 之前的 governance DB）→ ensure_schema 只补 0003。
+
+        - 0001/0002 表族与版本记录不被改写；
+        - 0003 建出 `governance_runtime_health` 表与心跳索引（P2-2 Spec §3/§12）。
+        """
+        db = str(gov_tmp / "gov-old.sqlite")
+        store = gov_store._GovernanceSqliteStore(db)
+        migrations_dir = _REPO_ROOT / "db" / "governance_migrations"
+        for filename in ("0001_governance.sqlite.sql", "0002_sessions.sqlite.sql"):
+            sql = (migrations_dir / filename).read_text(encoding="utf-8")
+            for stmt in [s.strip() for s in sql.split(";") if s.strip()]:
+                store.execute(stmt)
+        with store.transaction() as tx:
+            tx.execute(
+                "CREATE TABLE IF NOT EXISTS governance_schema_migrations ("
+                "version TEXT PRIMARY KEY, applied_at TEXT NOT NULL)"
+            )
+            for version in ("0001", "0002"):
+                tx.execute(
+                    "INSERT INTO governance_schema_migrations (version, applied_at) "
+                    "VALUES (%s, %s)",
+                    (version, "2026-10-03T00:00:00+00:00"),
+                )
+        gov_migrations.ensure_schema(store)  # 只补 0003
+        assert gov_migrations.applied_migration_versions(store) == [
+            "0001",
+            "0002",
+            "0003",
+        ]
+        tables = {
+            r["name"]
+            for r in store.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+        assert "governance_runtime_health" in tables
+        assert "governance_tasks" in tables and "sessions" in tables
+        indexes = {
+            r["name"]
+            for r in store.execute("PRAGMA index_list(governance_runtime_health)")
+        }
+        assert "idx_runtime_health_heartbeat" in indexes
         store.close()
 
     def test_migration_idempotent(self, gov_tmp):
@@ -125,6 +172,7 @@ class TestGovernanceStoreSqlite:
         assert gov_migrations.applied_migration_versions(store) == [
             "0001",
             "0002",
+            "0003",
         ]
         store.close()
 

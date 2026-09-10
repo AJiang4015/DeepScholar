@@ -35,7 +35,10 @@ from app.runtime.governance.controller import (
     GovernanceController,
     get_controller as get_governance_controller,
 )
+from app.runtime.governance.heartbeat import HeartbeatWriter
 from app.runtime.governance.policy import PolicyValidationError
+from app.runtime.governance.reclaim import ReclaimConfig
+from app.runtime.governance.scanner import RuntimeHealthScanner
 from app.session import service as session_service
 from app.utils.session_id import (
     InvalidThreadIdError,
@@ -55,6 +58,53 @@ from app.utils.upload_guard import (
 )
 
 
+async def _start_runtime_health() -> "RuntimeHealthScanner | None":
+    """装配 Runtime Health Plane（P2-2 S6 / Spec Rev 2.2 §7.2、§13.1；D7 / `-013`）。
+
+    顺序（严格）：controller singleton → health writer → scanner → **bounded startup sweep** →
+    返回 scanner（由 lifespan 在 `yield` **之前** 启动 periodic）。
+
+    - 配置单一来源：`ReclaimConfig.from_env()`（内含 `HeartbeatConfig`）；server **不**复制 mode 解析；
+    - controller 必须为 `get_controller()` 单例（SC-1/SC-2：禁止新建 controller）；
+    - `RUNTIME_RECLAIM_MODE=off` → 不注入 writer、不创建 scanner（返回 None）；
+    - 任何失败由调用方（lifespan）fail-open 处理，**不** fail-fast（D7）。
+    """
+    cfg = ReclaimConfig.from_env()
+    ctl = get_governance_controller()
+    if ctl is None:
+        print("[Server] Runtime health 未装配（governance controller 不可用）")
+        return None
+    if not cfg.enabled:
+        ctl.heartbeat_writer = None
+        print(
+            "[Server] Runtime health 已停用（RUNTIME_RECLAIM_MODE=off）：不写心跳、不扫描"
+        )
+        return None
+
+    # health writer（S3 已接线；此处按 mode 重新装配，配置来自 ReclaimConfig.heartbeat 单一来源）
+    ctl.heartbeat_writer = HeartbeatWriter(
+        ctl._store,  # noqa: SLF001 — 复用 store 句柄（governance service 同先例）
+        config=cfg.heartbeat,
+    )
+    # scanner 绑定既有 controller 单例（禁止新建 controller）
+    scanner = RuntimeHealthScanner(ctl, config=cfg)
+    stats = await scanner.startup_sweep()  # 有界（batch ≤ 200 / 预算 ≤ 2s）+ fail-open
+    print(
+        "[Server] Runtime health startup sweep: "
+        f"scanned={stats.scanned} eligible={stats.eligible} "
+        f"reclaimed={stats.reclaimed} cleaned={stats.cleaned} errors={stats.errors}"
+    )
+    return scanner
+
+
+async def _stop_runtime_health(scanner: "RuntimeHealthScanner | None") -> None:
+    """停止 periodic scanner（stop → cancel → await；cancellation 安全、幂等）。"""
+    if scanner is None:
+        return
+    await scanner.stop()
+    print("[Server] Runtime health periodic scanner stopped")
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     """
@@ -67,6 +117,9 @@ async def lifespan(_app: FastAPI):
     3. 启动期 prewarm：创建后端 checkpointer 并 lazy 组装主智能体（官方
        AsyncSaver 必须在 running loop 内创建），保持 R2 的“启动即可发现 DB
        不可用”语义，并避免首个请求承担初始化延迟。
+    4. P2-2 S6：Runtime Health Plane 装配（health writer + scanner + 有界 startup sweep）
+       ——在 `yield` **之前** 完成；`RUNTIME_RECLAIM_MODE` 控制三态；全部失败路径 fail-open
+       （D7：不 fail-fast，不改变既有 checkpoint prewarm/fail-fast 语义）。
     """
     loop = asyncio.get_running_loop()
     manager.set_loop(loop)
@@ -78,7 +131,24 @@ async def lifespan(_app: FastAPI):
 
     await get_main_agent()
     print("[Server] Checkpoint backend ready (main agent assembled lazily)")
+
+    # P2-2 S6（DEV-3 前移 + S6 完成）：Runtime Health Plane 装配（fail-open）
+    health_scanner = None
+    try:
+        health_scanner = await _start_runtime_health()
+        if health_scanner is not None and health_scanner.start_periodic():
+            print("[Server] Runtime health periodic scanner started")
+    except Exception as exc:  # noqa: BLE001 — 健康平面失败不得阻止服务启动（D7）
+        print(f"[Server] Runtime health 装配失败（fail-open）：{exc}")
+
     yield
+
+    # P2-2 S6：先停 scanner（stop → cancel → await），再释放 checkpoint 资源；
+    # scanner 停止异常不得阻塞既有 shutdown 流程。
+    try:
+        await _stop_runtime_health(health_scanner)
+    except Exception as exc:  # noqa: BLE001 — 既有 shutdown 顺序不受健康平面影响
+        print(f"[Server] Runtime health 停止失败（fail-open）：{exc}")
     await shutdown_checkpoint_lifespan()
     print("[Server] Checkpoint resources released")
 

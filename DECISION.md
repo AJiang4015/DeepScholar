@@ -595,3 +595,287 @@ LangGraph/LangChain 依赖**。本更新推翻了原决策中"不改 uv.lock / p
 - **Related Problems**: 无新增（审计发现，未登记 PROBLEM.md）
 - **Related Architecture**: ARCHITECTURE.md（Runtime lifecycle / governance controller /
   server 提交接线）；`P2-1_RUNTIME_POLICY_ENFORCEMENT_SPEC.md` / `P2-1_IMPLEMENTATION_PLAN.md`
+
+## D-Phase2-P2-2-001 — Runtime Health Plane：heartbeat = Runtime Health Telemetry（stale 为派生态）
+
+- **Status**: Accepted（P2-2 Decision Closure Report §Decision Status 审核通过；随该报告等待用户 ratify）
+- **Context**: 审计确认进程退出/执行器失联时 `running` 行无存活信号、无 stale 判定、无收敛路径与
+  诊断数据（现场「研搜中」>30min）。F8 冻结 `governance_tasks` 为 Task Lifecycle 字段权威
+  （`tests/test_runtime_governance.py` TASK_COLUMNS 注释明文禁止 Plan 外 lifecycle 字段）。
+- **Decision**: 引入独立 **Runtime Health Plane**：heartbeat = **Runtime Health Telemetry**（存活
+  遥测），stale（healthy / stale / expired）= **派生只读态**，均**不进入** `TaskStatus` /
+  `governance_tasks.status`；reclaim 收敛到既有终态，不新增 TaskStatus 枚举值。
+- **Conflict Resolution（AGENTS §1 显式裁决，不静默）**: F8 §5.3 将「execution owner / lease /
+  heartbeat 机制」排除在 v1 之外、`PROJECT_CONTEXT` §4 亦禁止 `lease-heartbeat` —— 该禁令针对
+  **多实例 ownership/互斥（lease/fencing）**；本决策的 heartbeat **仅**为单实例健康遥测，
+  **不提供** lease/fencing/所有权仲裁，**不改变** F8 §5.3 single-instance 假设，**不新增**
+  第二 Runtime 控制面（F8 controller 仍是唯一 lifecycle 权威）。
+- **Alternatives**: 无持久化心跳（无法判定执行器失联，拒）；把 stale 写入 TaskStatus（改冻结枚举，拒）；
+  引入 lease/heartbeat 作为多实例机制（超出 P2-2 范围且违反 F8 §5.3，拒）。
+- **Consequences**: 遗留 RUNNING 可被确定性识别与收敛；诊断面具备 `last_heartbeat` 语义；
+  代价是新增健康平面存储与扫描组件。
+- **Constraints Created**: LA-1–LA-4（heartbeat 只写 health plane；reclaim 只经
+  `finalize_with_event`；health 不写 status；health 行清理不属 controller）。
+- **Related Problems**: P2-2 Closure 建议在实现阶段评估登记（「无健康平面导致遗留 RUNNING 不可诊断」）。
+- **Related Architecture**: `P2-2_SPEC_v2.md` §4.0/§4.6/§9；F8 §5.3/§6.1。
+
+## D-Phase2-P2-2-002 — P2-2 阈值与配置默认值（沿用 M-Spec §7.4，env 可覆盖）
+
+- **Status**: Accepted（用户 2026-10 P2-2 启动指令已裁决；本 Closure 确认）
+- **Context**: P2-2 需要 wall_clock 与 stale grace 的默认值基准，且不得改变 P2-1 冻结的默认
+  policy 语义。
+- **Decision**: 默认 `wall_clock_timeout = 600s`（M-Spec §7.4）、`stale grace = 30s`、
+  `stale_threshold = wall_clock + grace`；上述参数**必须支持环境变量覆盖**
+  （`RUNTIME_WALL_CLOCK_TIMEOUT` / `RUNTIME_STALE_GRACE_PERIOD`），**默认值不变**；
+  P2-2 不做调参（Runtime Policy Tuning 属后续独立批次）；不针对单个 Agent 调整 timeout。
+- **Alternatives**: 全局固定常量（长任务误回收，拒）；本批内改默认值（越界，拒）。
+- **Consequences**: 观测到的阈值可运维调整而不改代码；默认行为与 P2-1 基线一致。
+- **Constraints Created**: 逐任务 `effective_limits.wall_clock_timeout` 为 stale 判定主基准，
+  全局 env 仅作 legacy 回退（`P2-2_SPEC_v2.md` §5.1）。
+- **Related Problems**: 无新增
+- **Related Architecture**: `P2-2_SPEC_v2.md` §5/§13。
+
+## D-Phase2-P2-2-003 — reclaim 终态映射：restart → aborted；stale/registry → orphan_reclaimed（Gate D5）
+
+- **Status**: Accepted（P2-2 Decision Closure；Gate D5 审核通过；随该报告等待用户 ratify）
+- **Context**: F8 §6.1/§10.2 冻结区分「进程 shutdown/restart 收敛 = `aborted`」与「台账与实际
+  执行者脱节 = `orphan_reclaimed`」；P2-1 Spec 语境曾出现「统一复用 `orphan_reclaimed`」的表述，
+  构成文字冲突（AGENTS §1 要求显式裁决）。
+- **Decision**: 采纳 F8 拆分：**startup sweep（上一世代/实例失联）→ `aborted`**；
+  **heartbeat stale / registry 脱节 → `orphan_reclaimed`**；两者均为既有终态，不新增状态。
+- **Alternatives**: 统一 `orphan_reclaimed`（偏离 F8 冻结文字、混淆「重启」与「脱节」语义，拒）。
+- **Consequences**: 终态语义可审计、与 F8 一致；前端文案缺口（aborted/orphan_reclaimed）记为后续项。
+- **Constraints Created**: reclaim 唯一入口 = `controller.finalize_with_event(...)`；
+  终态选择必须按触发源映射（不得由调用方自由选择）。
+- **Related Problems**: 无新增
+- **Related Architecture**: P2-2 Spec v2 §6.1/§6.2；F8 §6.1/§10.2。
+
+## D-Phase2-P2-2-004 — 心跳首拍时机 = `_execute_governed` 执行起点（Gate D13）
+
+- **Status**: Accepted（P2-2 Decision Closure；Gate D13 审核通过；随该报告等待用户 ratify）
+- **Context**: 首拍存在两处候选：`submit_task` 后 vs `_execute_governed` 起点。`submit_task` 只
+  表示「受理」，其后才 `create_task`/`ensure_future`/注册 handle；`execute()` 早期失败
+  （store 读失败等）会留下无执行的 running 行。
+- **Decision**: 首拍**必须**在 `_execute_governed` 执行起点、**handle 注册成功之后**写入；
+  `submit_task` 路径**MUST NOT** 写心跳。
+- **Alternatives**: submit 路径写首拍（会把「未开始执行」伪装成「有心跳」，并前移 stale 基准，拒）。
+- **Consequences**: heartbeat 的存在性成为「曾进入 governed 执行」的证据（与 Gate D18 证据条件互补）。
+- **Constraints Created**: 首拍写失败为 fail-open（不阻断执行），由 stale/registry 路径兜底。
+- **Related Problems**: 无新增
+- **Related Architecture**: P2-2 Spec v2 §4.3(1)/§5.5；`controller._execute_governed` 顺序。
+
+## D-Phase2-P2-2-005 — RuntimeHealthScanner 组件边界（Gate D14）
+
+- **Status**: Accepted（P2-2 Decision Closure；Gate D14 审核通过；随该报告等待用户 ratify）
+- **Context**: startup sweep + periodic scan + 分类 + 收敛 + 清理若写入 `server.py` 会使 API 层
+  承担 Runtime 逻辑并不可测。
+- **Decision**: 抽象独立 runtime 组件 `RuntimeHealthScanner`（startup sweep / periodic scan /
+  owner 分类 / reclaim 协调 / health 只读视图 / 健康行清理）；`server.lifespan` **仅**负责生命周期
+  接线（构造、启动、shutdown cancel）；scanner **MUST** 复用进程级 `get_controller()` 单例
+  （`SC-1`–`SC-4`），**MUST NOT** 新建 controller（否则 handle registry 为空 → 全量误回收）。
+- **Alternatives**: 扫描逻辑内联 server.py（膨胀 + 不可测，拒）；scanner 自建 controller（高危，拒）。
+- **Consequences**: 可测（可注入 clock/触发）、可复用（P2-4 后续读取 health 视图）、server 保持薄层。
+- **Constraints Created**: scanner 只读调用 controller（`get_task`/`has_active_handle`/
+  `terminal_decision`）与 `finalize_with_event`；controller 不依赖 scanner；**文件/模块命名为
+  Planning 决策，不在本次 Closure 冻结**。
+- **Related Problems**: 无新增
+- **Related Architecture**: P2-2 Spec v2 §7.0/§7.1。
+
+## D-Phase2-P2-2-006 — registry 脱节收敛证据条件（Gate D18）
+
+- **Status**: Accepted（P2-2 Decision Closure；Gate D18 审核通过；随该报告等待用户 ratify）
+- **Context**: `submit_task` 建行后才注册 handle；仅凭「无 handle + age」会在事件循环阻塞时
+  误回收「已受理但尚未开始」的任务；`start_task()` 失败非致命，`started_at` 可能为空。
+- **Decision**: registry 脱节路径收敛**必须**同时满足：`age > RUNTIME_RECLAIM_MIN_AGE`
+  **且**（健康行存在 **或** `started_at` 非空）**且**
+  `now - max(last_heartbeat_at, started_at) > max(3 × RUNTIME_HEARTBEAT_INTERVAL, 15s)`；
+  不满足则仅记 stale/diagnostic，不收敛。
+- **Alternatives**: 仅 `age > MIN_AGE`（误回收窗口，拒）；仅看 `started_at`（失败场景漏判，拒）。
+- **Consequences**: 关闭 submit→handle 注册窗口与「心跳写长期失败」误判。
+- **Constraints Created**: 该阈值（3× 心跳间隔且 ≥15s）同时作为「liveness 证据」基准。
+- **Related Problems**: 无新增
+- **Related Architecture**: P2-2 Spec v2 §5.4 P10/§6.1。
+
+## D-Phase2-P2-2-007 — 健康行生命周期与清理责任方 = scanner（Gate D17）
+
+- **Status**: Accepted（P2-2 Decision Closure；Gate D17 审核通过；随该报告等待用户 ratify）
+- **Context**: 若在 controller/funnel 内删除健康行，lifecycle 权威模块将承担 health 平面写操作。
+- **Decision**: 健康行：首拍/周期拍由 controller 持有的 HeartbeatWriter 写；**清理（终态任务行 +
+  孤儿行）由 scanner 负责**；controller/funnel **MUST NOT** 删除健康行。`RUNTIME_RECLAIM_MODE=off`
+  ⇒ 心跳写亦停（避免无清理者的行增长）。
+- **Alternatives**: controller 内终态即删（污染 lifecycle 边界，拒）；TTL 保留（无界增长风险，拒）。
+- **Consequences**: 清理滞后 ≤ 1 个扫描周期；lifecycle 模块保持单一职责。
+- **Constraints Created**: LA-4；`off`/`detect`/`enforce` 行为矩阵（Spec v2 §13.1）为唯一模式语义。
+- **Related Problems**: 无新增
+- **Related Architecture**: P2-2 Spec v2 §4.6/§12.2/§13.1。
+
+## D-Phase2-P2-2-008 — reclaim 诊断载体 = 仅 `error` 字符串（Gate D16，非阻塞）
+
+- **Status**: Accepted（P2-2 Decision Closure；Gate D16 审核通过；随该报告等待用户 ratify）
+- **Context**: reclaim 需要可诊断信息（trigger/owner_class/last_heartbeat/threshold/age），但
+  `events.lifecycle_event` 属冻结 observation 模块。
+- **Decision**: P2-2 只把诊断写入终态 `error` 字符串（≤800 字符，沿用 `_clip_error` 约束），
+  **MUST NOT** 修改 `events.lifecycle_event` 的 payload 构造；结构化 payload 扩展留 P2-4 另行决策。
+- **Alternatives**: 直接扩展 payload（触碰冻结 observation 模块，拒）。
+- **Consequences**: 最小 diff、不破坏 replay 契约；诊断可读性略低于结构化字段。
+- **Constraints Created**: error 字符串不得包含凭据、prompt 正文或工具参数。
+- **Related Problems**: 无新增
+- **Related Architecture**: P2-2 Spec v2 §10。
+
+## D-Phase2-P2-2-009 — 跨进程重复 terminal event = 已知限制，本批不硬化（Gate D19，非阻塞）
+
+- **Status**: Accepted（P2-2 Decision Closure；Gate D19 审核通过；随该报告等待用户 ratify）
+- **Context**: 单实例内 `terminalize` 经内存裁决短路/DB 已终态采纳，保证 ≤1 terminal event；
+  但跨进程 CAS 败者在 retry 采纳 DB 事实时仍返回 `winner=True`，`finalize_with_event` 可能重复发布
+  （`controller.py` L316→L319-326）。
+- **Decision**: P2-2 的 exactly-once event 保证**限定于单实例 supported envelope**（F8 §5.3）；
+  跨进程重复事件记录为**已知限制**，**本批不做**硬化（硬化需改动冻结 controller 语义）。
+- **Alternatives**: 立即硬化（标记 `adopted_from_db` 并跳过发布——属冻结模块改动，本批拒，留待
+  多实例议题重启时评估）。
+- **Consequences**: 不引入冻结面改动；Spec/Report 必须显式声明该限制（不得宣称全局 exactly-once）。
+- **Constraints Created**: 若未来启用多实例，必须先解决该重复事件语义（与 owner/lease 议题同批）。
+- **Related Problems**: 无新增
+- **Related Architecture**: P2-2 Spec v2 §6.3；F8 §5.3。
+
+## D-Phase2-P2-2-010 — owner 三分法收敛条件：SAME_HOST_PREV 必须叠加 liveness 证据（Gate D15 修订）
+
+- **Status**: Accepted（用户 2026-10 ratify P2-2 Decision Closure 并批准执行 D15 Spec 修订；登记为
+  append-only 追加）
+- **Context**: v2 设计对 `SAME_HOST_PREV`（同主机、异 PID ⇒ 上一世代）允许「立即收敛」，仅对
+  `CURRENT` 叠加心跳陈旧条件。该设计在 **rolling / blue-green 部署重叠窗口**下不安全：旧进程仍在
+  运行且持续写心跳（owner 为旧 PID、同主机），新进程 startup sweep 会立即把它标记为上一世代并
+  `aborted` → **误杀在途任务**。
+- **Decision**: `SAME_HOST_PREV` **不得**因 owner generation 不同而立即 reclaim；收敛前必须满足
+  **liveness 证据**：
+  `now - last_heartbeat_at > max(3 × RUNTIME_HEARTBEAT_INTERVAL, 15s)`；
+  若无 heartbeat health row（legacy）→ 回退 `now - max(started_at, created_at) > 同阈值`。
+  `CURRENT` 维持既有规则（`deadline_evidence` = `wall_clock_timeout + stale grace`）；
+  `FOREIGN` 继续只观测、**禁止 reclaim**。三分法分类本身（CURRENT / SAME_HOST_PREV / FOREIGN）保持不变。
+- **核心安全不变量**:
+  - 活跃的旧进程在 rolling / blue-green overlap 期间**不得**被新进程 startup sweep 误杀；
+  - 真正停止心跳的 `SAME_HOST_PREV` 任务仍可在 **~15s 级**进入 reclaim；
+  - 不新增 TaskStatus；不改变 F8 lifecycle authority；
+  - heartbeat 仍然只是 Runtime Health Telemetry，**不是 lease / fencing**。
+- **Alternatives**: 维持「立即收敛」（重叠部署误杀，拒）；统一要求 `deadline_evidence`
+  （真死进程需等 ~630s 才收敛，恢复过慢，拒）；引入 lease/心跳互斥（超出 P2-2 范围且违反
+  F8 §5.3，拒）。
+- **Consequences**: restart 场景的遗留任务收敛延迟从「立即」变为「最后一次心跳 + ~15s」；
+  换来重叠部署期间不误杀在途任务。`liveness` 阈值复用 D18 已有参数，**不新增配置项**。
+- **Constraints Created**: `SAME_HOST_PREV` 的 startup/periodic 收敛均须先判定 `liveness_evidence`；
+  该证据同时受 P3 最小年龄守卫约束；`FOREIGN` 永远只统计。
+- **Related Problems**: 无新增
+- **Related Architecture**: `P2-2_SPEC_v2.md` **Rev 2.1** §5.5 / §6.1 / §6.2 / §7.3 / §14 F11；
+  F8 §5.3/§10.2 e。
+- **Ratification Note**: 用户已于 2026-10 ratify `D-Phase2-P2-2-001`–`009`（append-only：不改写既有
+  条目状态字段）；`D3/D6/D7/D8/D9/D11/D12` 仍 awaiting explicit confirmation，未登记。
+
+## D-Phase2-P2-2-011 — 双阶段确认次数 = 2（Gate D3）
+
+- **Status**: Accepted（用户 2026-10 批准 P2-2 Pending Decision Proposal；append-only 追加）
+- **Context**: 周期扫描需要决定「连续 N 次判定 stale 才允许 reclaim」，以在误回收防护与收敛延迟之间
+  取舍；启动期 sweep 为单遍执行，无法套用确认次数，须由证据谓词（`liveness_evidence` /
+  `deadline_evidence`）承担同等职责。
+- **Decision**: `RUNTIME_STALE_CONFIRMATIONS` 默认 **2**；配置下限 1，取 1 须显式 opt-in 并在日志标注
+  `aggressive`；确认计数为进程内状态、重启清零（更保守）；**启动 sweep 不适用确认次数**。
+- **Alternatives**: 1 次（低延迟、防护弱）；3 次（更保守但延迟高）；自适应分裂阈值（复杂度高、
+  收益不明确）——均未采纳。
+- **Consequences**: 收敛延迟增加 1 个扫描周期；误回收概率进一步下降；启动/周期严格度不对称须在
+  Spec 中保持明示。
+- **Constraints Created**: 确认次数只作用于 periodic 路径；startup 路径的误判防护只能依赖证据谓词 +
+  owner 分类 + 最小年龄。
+- **Related Problems**: 无新增
+- **Related Architecture**: `P2-2_SPEC_v2.md` Rev 2.2 §5.2/§8；F8 §10.2。
+
+## D-Phase2-P2-2-012 — `flush_pending` 本批不接线（Gate D6）
+
+- **Status**: Accepted（用户 2026-10 批准；append-only 追加）
+- **Context**: `controller.flush_pending()`（F8 既有方法）在生产代码中无调用方；需要决定 P2-2 是否接线，
+  以及如何处理「内存已裁决、DB 写失败」的 pending 裁决。
+- **Decision**: **本批不接线**（startup flush 在重启后恒为空操作；周期 reconciler 属 F8 文档化 future，
+  越出本批范围）；`shutdown flush` 登记为后续批次候选（需独立批准，且须硬超时 + fail-open）。
+- **Alternatives**: startup flush（新进程内存为空 → 无效，拒）；周期 reconciler（scope 外扩，拒）；
+  本次一并接线 shutdown flush（未获批准，留候选）。
+- **Consequences**: pending 裁决在进程死亡后由 startup/periodic sweep 收敛，可能产生**终态语义漂移**
+  （原裁决 → `aborted`/`orphan_reclaimed`）；方向保守、可审计，但丢失原裁决原因（记为已知限制）。
+- **Constraints Created**: 任何未来的 flush 调用点必须 fail-open 且不得阻断 control（F8 §7.2）；
+  pending 的内存裁决权威/retry 阶梯/degraded 标记语义保持不变。
+- **Related Problems**: 无新增
+- **Related Architecture**: `P2-2_SPEC_v2.md` Rev 2.2 §6.5；F8 §7.2。
+
+## D-Phase2-P2-2-013 — startup sweep 时序 = `yield` 前有界 sweep（Gate D7）
+
+- **Status**: Accepted（用户 2026-10 批准；append-only 追加）
+- **Context**: 启动期收敛遗留 `running` 行应发生在 `lifespan` `yield` 之前（阻塞 readiness）还是之后
+  （后台执行）——决定 readiness 语义、F8 restart 收敛的确定性、以及首请求是否可能看到遗留假 running。
+- **Decision**: 采**方案 A**：`store/migration init → startup sweep（batch ≤200、预算 ≤2s、fail-open）→
+  yield`；store 不可用或超预算 → 跳过 + 日志，**不 fail-fast**（显式取舍，见下）。
+- **Alternatives**: 方案 B（yield 后后台）——窗口内旧行可见，且与新 submit 竞争可能把旧行收敛为
+  `cancelled` 而非 F8 语义的 `aborted`，并触发 session archive 守卫 409 → 拒；方案 C（混合快速通道）
+  ——当前遗留行数 ≈ 崩溃时在途任务数（通常 <10），复杂度不划算 → 留作规模化演进选项。
+- **Consequences**: 首请求前账本干净、收敛确定；代价是有界启动延迟（受 batch/预算约束）。
+- **Constraints Created**: **显式记录对 F8 §7.3 (c3) 的取舍**：本批选择「startup governance store 不可用 →
+  跳过 sweep、服务继续（提交侧由 c1 返回 503）」，而非启动 fail-fast；FOREIGN owner 行不参与 sweep。
+- **Related Problems**: 无新增
+- **Related Architecture**: `P2-2_SPEC_v2.md` Rev 2.2 §7.2/§7.3；F8 §10.2 e、§7.3 c3。
+
+## D-Phase2-P2-2-014 — scanner interval = 15s + ±20% 抖动（Gate D8）
+
+- **Status**: Accepted（用户 2026-10 批准；append-only 追加；相对 Spec v2 默认值 30s 的变更）
+- **Context**: 周期扫描间隔决定检出/收敛延迟、扫描开销与健康行清理滞后；Spec v2 默认 30s。
+- **Decision**: `RUNTIME_SCAN_INTERVAL` 默认 **15s**，抖动 **±20%**（进程随机相位），
+  **单飞**且**空闲跳过**；30s 亦为可接受配置（env 覆盖）。
+- **Alternatives**: 30s（v2 默认，开销更低但延迟翻倍）；60s（延迟过高）；自适应退避（复杂度换收益不明确）
+  ——均未采纳。
+- **Consequences**: registry 脱节路径最坏检出延迟 ≈ min_age + 2×15s；与确认次数（2）相乘后总延迟 30s
+  （优于 30s×2=60s）；扫描开销可忽略（1 次索引查询 + N 行 Python 判定）。
+- **Constraints Created**: 抖动必须按进程随机相位；验收标准需写明最坏检出延迟公式；
+  Spec 默认值需在 Rev 2.2 同步（§13/§8）。
+- **Related Problems**: 无新增
+- **Related Architecture**: `P2-2_SPEC_v2.md` Rev 2.2 §8/§13；F8 §10.2（示例值「如 15s」）。
+
+## D-Phase2-P2-2-015 — heartbeat PostgreSQL 写约束（Gate D9）
+
+- **Status**: Accepted（用户 2026-10 批准；append-only 追加）
+- **Context**: PG 后端 governance store 每次调用开**短连接**且**同步执行于事件循环内**；心跳（5s/任务）
+  会随在途任务数放大连接与 loop 抖动，而同一 loop 承载 watchdog 与 agent 调度。
+- **Decision**: 逐拍 UPSERT + 逐任务节流（默认 5s）+ 抖动相位；**不引入连接池、不新增依赖**；
+  心跳写**必须**为单语句短事务（禁止在同一调用内追加查询/锁/重试风暴）；批量 writer 列为**应急候选**
+  （需独立批准）。
+- **Alternatives**: 连接池（新增依赖/基础设施，违反 AGENTS §4，拒）；仅内存心跳（破坏 D15
+  `liveness_evidence`，会使活跃旧进程被误判，拒）；批量 writer（保留为实测后的应急路径）。
+- **Consequences**: 保留 D15 安全证据可判定性；控制路径不受心跳写开销侵蚀（F8 §7.2）。
+- **Constraints Created**: 心跳写 fail-open；不得借此引入 lease/fencing（F8 §5.3 不变）。
+- **Related Problems**: 无新增
+- **Related Architecture**: `P2-2_SPEC_v2.md` Rev 2.2 §4.5/§11；F8 §7.2、§5.3。
+
+## D-Phase2-P2-2-016 — Problem Registry 登记时机（Gate D11）
+
+- **Status**: Accepted（用户 2026-10 批准；append-only 追加）
+- **Context**: 「Runtime 无健康平面 ⇒ 进程退出/执行器失联后任务永久 RUNNING 且不可诊断」具备长期价值，
+  但 P2-2 仍处 Spec/Decision Closure 阶段（AGENTS §11.3 的登记义务发生在任务完成前）。
+- **Decision**: 本轮**不登记**；在 **P2-2 Implementation 起点**（或 Readiness 通过时）登记正式 Problem
+  （`docs/problem/P0NN-*.md` + `PROBLEM.md` 索引行，登记动作需单独批准）。
+- **拟登记内容**: 题名「Runtime 缺少健康平面：进程退出/执行器失联后任务永久 RUNNING 且不可诊断」；
+  Type = Runtime behavior / Architecture constraint；Severity = High；预期状态 Open → 由 P2-2 实现关闭；
+  关联 `RUNTIME_OBSERVABILITY_AUDIT_REPORT.md`、`P2-2_SPEC_v2.md` Rev 2.2、`D-Phase2-P2-2-001`。
+- **Alternatives**: 现在登记（与实现进度脱节）；登记 Candidate（轻量但检索性弱）；不登记（丢失稳定 ID，拒）。
+- **Consequences**: 知识沉淀时机与实现对齐；本轮 `PROBLEM.md` 零改动。
+- **Constraints Created**: 登记必须引用本批 Spec/Decision，避免与 Phase-2 路线重复登记。
+- **Related Problems**: 拟新增（P0NN，待登记）
+- **Related Architecture**: Harness 层（AGENTS §11 / PROBLEM.md）；与 F8/F9 无关。
+
+## D-Phase2-P2-2-017 — frontend terminal 文案策略 = 本批零改动（Gate D12）
+
+- **Status**: Accepted（用户 2026-10 批准；append-only 追加）
+- **Context**: P2-2 首次让 `aborted` / `orphan_reclaimed` 成为生产可见终态。原 Spec 表述「文案缺口」经
+  证据核验**不成立**：`frontend/src/lib/taskStatus.ts:13-14` 已有「任务中止」「已回收」；
+  `frontend/src/components/ConversationThread.tsx:323-326` 已有对应断线提示文案。
+- **Decision**: **本批零 frontend 改动**；真实缺口仅为「`aborted`/`orphan_reclaimed` 不展示 `error`
+  原因」（仅 `failed` 分支展示，L311-314），记为后续项（P2-3 或独立小批，需显式 scope 例外批准）。
+  Spec §9/§21 的表述在 Rev 2.2 更正。
+- **Alternatives**: 同批 ≤5 行补 `error` 展示（打破本批「零 frontend」边界，未采纳）；永不改动（信息缺失，拒）。
+- **Consequences**: 批次边界清晰；reclaim 原因需查 `GET /api/tasks/{id}` 或事件/日志。
+- **Constraints Created**: 未来若做 reason 展示，须遵守 `D-Phase2-P2-2-008`（`error` 不得含凭据/prompt 正文），
+  且不得改动 WS/HTTP 契约（AGENTS §4）。
+- **Related Problems**: 无新增
+- **Related Architecture**: `P2-2_SPEC_v2.md` Rev 2.2 §9/§21；前端呈现层。

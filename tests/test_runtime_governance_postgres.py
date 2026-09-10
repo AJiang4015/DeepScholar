@@ -86,10 +86,11 @@ class TestGovernanceStorePostgres:
         # 先确保空（表族可能残留自其它测试：幂等 ensure 即可，不做 DROP——fixture/reset 由 CI 库清场）
         gov_migrations.ensure_schema(store)
         gov_migrations.ensure_schema(store)
-        # 0002_sessions 为 governance 迁移族 additive（Multi-Session；0001 语义零改动）
+        # 0002_sessions / 0003_runtime_health 均为 governance 迁移族 additive（0001 语义零改动）
         assert sorted(gov_migrations.applied_migration_versions(store)) == [
             "0001",
             "0002",
+            "0003",
         ]
         store.close()
 

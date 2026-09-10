@@ -47,6 +47,7 @@ from app.runtime.governance.counters import (
     BudgetCounter,
     GovernanceLimitExceeded,
 )
+from app.runtime.governance.heartbeat import HeartbeatWriter
 from app.runtime.governance.models import (
     ErrorKind,
     TaskRecord,
@@ -177,6 +178,10 @@ class GovernanceController:
         #: Batch3(A) live sink：callable(frame: dict) → None（observation，fail-open；默认无=不广播）。
         #: 由 server/WS 层注入（现有 manager.enqueue 抽象），controller 不依赖 manager。
         self.live_sink = None
+        #: P2-2 S3（D-Phase2-P2-2-001/-004）：health plane 心跳写入器，由 server lifespan 装配注入
+        #: （与 live_sink 同款注入模式）；None = 未接线 / off 模式 ⇒ 不写心跳（fail-safe）。
+        #: 心跳为 Runtime Health Telemetry，**非** lease/fencing；写入只经 health_store。
+        self.heartbeat_writer: Optional[HeartbeatWriter] = None
         self._lock = asyncio.Lock()
         #: task_id → 内存 terminal 裁决（含未 durable 的 pending 裁决）
         self._decisions: dict[str, _TerminalDecision] = {}
@@ -630,6 +635,9 @@ class GovernanceController:
                     created_at=_now_iso(),
                 )
                 self._handles[task_id] = handle
+                # P2-2 S3（D13 / D-Phase2-P2-2-004）：**执行起点首拍** —— handle 注册成功后立即写
+                # （force=True 不等待节流窗口）。submit 路径不写首拍；bare（_execute_bare）不写心跳。
+                self._beat(task_id, record, force=True)
                 if timeout > 0:
                     watchdog = asyncio.create_task(
                         self._watchdog_loop(
@@ -637,6 +645,7 @@ class GovernanceController:
                             deadline_mono,
                             counter,
                             tick=self.watchdog_tick,
+                            record=record,
                         )
                     )
                 result = await fut
@@ -679,6 +688,9 @@ class GovernanceController:
                     await watchdog
             if handle is not None and self._handles.get(task_id) is handle:
                 del self._handles[task_id]
+            # P2-2 S3（DEV-2 裁决）：执行退出（finally）释放心跳节流状态；
+            # 不进入 frozen funnel（terminalize/CAS/pending/event），也不删除 DB 健康行（S5 scanner 负责）。
+            self._forget_beat(task_id)
 
     async def _watchdog_loop(
         self,
@@ -687,12 +699,15 @@ class GovernanceController:
         counter: BudgetCounter,
         *,
         tick: float = WATCHDOG_TICK_SECONDS,
+        record: Optional["TaskRecord"] = None,
     ) -> None:
         """watchdog：单调 clock 检查单一 authoritative deadline（Spec §9）。
 
         - handle 结束 / 已裁决 → 退出；
         - deadline 到达 → funnel(timed_out)（funnel 会 cancel 底层 handle）→ 退出；
-        - watchdog 自身异常（F5/c2）→ 收敛 failed(governance_control_failure)。
+        - watchdog 自身异常（F5/c2）→ 收敛 failed(governance_control_failure)；
+        - P2-2 S3（additive）：每 tick 追加一次 health plane 心跳尝试（writer 内部节流；fail-open），
+          不改变上述 deadline / 收敛语义。
         """
         try:
             while True:
@@ -701,6 +716,9 @@ class GovernanceController:
                     return
                 if self._decisions.get(task_id) is not None:
                     return
+                # P2-2 S3：心跳（health plane；writer 未注入 → no-op；内部按 interval+相位节流）
+                if record is not None:
+                    self._beat(task_id, record)
                 if time.monotonic() >= deadline_mono:
                     await self.finalize_with_event(
                         task_id,
@@ -799,6 +817,52 @@ class GovernanceController:
             "owner_instance": self._owner,
             "store_readable": read_ok,
         }
+
+    # ------------------------------------------------------------------
+    # P2-2 S3 — health plane 接线（additive；fail-open；不触碰 lifecycle 写路径）
+    # ------------------------------------------------------------------
+    def _beat(self, task_id: str, record: "TaskRecord", *, force: bool = False) -> bool:
+        """写一次心跳（health plane）。
+
+        - writer 未注入（未接线 / `off` 模式）→ no-op（False）；
+        - `force=True` 仅用于**首拍**（`_execute_governed` handle 注册成功后，见 D13）；
+        - 后续 tick 走 writer 内部节流（interval + 确定性相位，D8/D9）；
+        - **fail-open**：任何异常一律吞掉 + 日志，绝不传播到执行控制路径（LA-1 / I2）；
+        - 只读 `record` 字段，**不**触碰 `governance_tasks` 任何 lifecycle 字段。
+        """
+        writer = self.heartbeat_writer
+        if writer is None:
+            return False
+        try:
+            return bool(
+                writer.beat(
+                    task_id=task_id,
+                    thread_id=record.thread_id,
+                    run_id=record.run_id,
+                    owner_instance=self._owner,
+                    force=force,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 — health plane 不得影响 control path
+            logger.warning(
+                "heartbeat beat 异常（task %s，fail-open）：%s", task_id, exc
+            )
+            return False
+
+    def _forget_beat(self, task_id: str) -> None:
+        """释放该执行的心跳节流状态（执行退出 finally 调用；DEV-2 裁决）。
+
+        仅清理 writer 的进程内 per-task 状态；**不删除 DB 健康行**（由后续 scanner cleanup 负责）。
+        """
+        writer = self.heartbeat_writer
+        if writer is None:
+            return
+        try:
+            writer.forget(task_id)
+        except Exception as exc:  # noqa: BLE001 — fail-open
+            logger.warning(
+                "heartbeat forget 异常（task %s，fail-open）：%s", task_id, exc
+            )
 
     # ------------------------------------------------------------------
     # internals
