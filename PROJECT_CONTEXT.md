@@ -6,19 +6,19 @@
 > override AGENTS.md / PROCESS.md / ARCHITECTURE.md / TESTING.md / DECISION.md / active
 > Spec contracts.
 > 冲突处理按 AGENTS.md §1 Authority 规则：不静默选择；报告冲突；以权威文档为准。
-> 维护规则见 §12。Last updated：2026-10-01。
+> 维护规则见 §12。Last updated：2026-10（P3 Decision Closure 落地）。
 
 ---
 
 ## 1. Current Status
 
-- 当前阶段：**F9-P0 Core Implementation = COMPLETE（2026-10-01 用户收敛决定）→
-  Documentation / Presentation 收尾阶段**
-- 当前 Feature：F9-P0（Spec Rev2 定稿 → Implementation Readiness Review PASS → Plan
-  Rev2 READY → Batch1–8 全部 PASS/FROZEN/MERGED → **F9-P0 Core COMPLETE**）
-- 当前状态：Batch 1–8 全部 **PASS / FROZEN / MERGED**（2026-09-22/24/26/28/29/30、
-  2026-10-01；Batch7/8 已 MERGED → main：B7 `619f6c7`、B8 `be6d625`，本地=远程一致）。
-  F9-P0 core（执行 + deterministic eval + calibration）完整可运行。
+- 当前阶段：**P3 Runtime Observability（Decision Closure = APPROVED + LANDED；未实现）→
+  P3-1 Event Contract L3 Spec 准备阶段**
+- 当前 Feature：**P3 Runtime Observability**（`D-P3-001…008` 已批准并落地；P3-1…P3-5 为唯一规范编号，
+  旧 P2-3/P2-4 的 runtime observability 部分 superseded-by-P3）
+- 当前状态：F9-P0 Core = COMPLETE（Batch1–8 PASS/FROZEN/MERGED）；**P2-1 / P2-2 已 FROZEN + MERGED**
+  （P2-1 `dd7af9a`；P2-2 `884a681` + merge `8d9531d`）；**P3 Decision Closure 已批准并落地**
+  （`D-P3-001…008`，docs-only commit）；P3 各批次实现**尚未开始**。
 - **Batch9 = Deferred / Future P1（用户 2026-10-01 决定停止推进）**：round/query-identity
   persistence（Spec §15 In 唯一未实现项）、runtime recovery 等**不作为 F9-P0 阶段继续
   开发**；不创建 Batch9 feature branch、不实施 schema migration、不改 F9 runtime。
@@ -27,17 +27,16 @@
   （F9-P0 Final Completion Report，宣告 COMPLETE）。
 - L0–L3 Task Classification Governance = **PASS / FROZEN**（2026-09-28 用户正式 Freeze；规则
   SoT = PROCESS.md §11；实施报告 `docs/plan/2026-09-28-l0-l3-governance-implementation-report.md`）
-- 是否允许继续实现：**否**。当前阶段只允许文档/展示产物：docs / README / 项目说明
-  材料；禁止：创建 Batch9 branch、修改 F9 runtime、修改 Batch1–8 frozen code、
-  F8/F1–F7 冻结契约、Commit 前扩大 scope
-- Git 状态（以实际 `git status` 为准）：branch = `main`（`be6d625`，Batch8 merged，本地=远程
-  一致）；工作树含 F9-P0 收尾文档（Final Completion Report + Batch9 readiness 落款 +
-  PROJECT_CONTEXT 收敛，均未 Commit）
-- 当前唯一 Next Action：等待用户 Review F9-P0 Final Completion Report + PROJECT_CONTEXT
-  收敛；Review 通过后进入 README / Interview Material（Documentation / Presentation 阶段）
-- Current Workflow Stage：**Documentation / Presentation（收尾；仅文档，L1）——等待
-  User Review → README / Interview Material → 文档完成后单独执行 Scope Audit →
-  Commit → Push**（本行瞬时状态，阶段结束即更新或清除；不新增规则）
+- 是否允许继续实现：**否（P3 实现未开始）**。允许：P3-1 L3 Spec 准备（文档）；禁止：修改
+  `app/**`（含 `events.py` / `callbacks.py` / `controller.py`）、DB / migration / 依赖、创建
+  `feature/p3-1-event-contract` 以外分支、绕过 `D-P3-001…008` 冻结约束、Commit 前扩大 scope
+- Git 状态（以实际 `git status` 为准）：branch = `main`（P3 Decision Closure docs-only commit 之上）；
+  工作树仍含**非本任务**未提交内容（P2-1/P2-2 后期报告、简历类文件、`docs/images/*.png`）——
+  归属未确认，按 AGENTS §10.5 不触碰
+- 当前唯一 Next Action：**创建 `feature/p3-1-event-contract` branch（git 写操作，需用户批准）→
+  进入 P3-1 Event Contract 的 L3 Spec**（Spec → Readiness → Decision → Plan Review）
+- Current Workflow Stage：**P3 Decision Closure 已落地 → P3-1 Spec 准备（L3；仅文档）——等待
+  用户批准 branch 创建 → Spec 起草**（本行瞬时状态，阶段结束即更新或清除；不新增规则）
 
 > 备注：本仓库曾在用户要求下完成一轮 Harness 文档治理（新增本文件 + AGENTS/PROCESS
 > 最小更新，2026-09-22，见 `docs/plan/2026-09-22-harness-document-governance-report.md`）。
@@ -52,6 +51,9 @@
   checkpoint saver（sqlite=AsyncSqliteSaver / postgres=AsyncPostgresSaver，`app/runtime/checkpoint.py`）。
   F8 起新增 governance runtime（`app/runtime/governance/`：task/controller/counters/
   callbacks/events），F8 Controller 是 **唯一 lifecycle/budget/deadline/cancel/terminal 权威**。
+- **Runtime Observability（P3；决策已落地 / 未实现）**：Task lifecycle 已 durable、Health Plane
+  （heartbeat / stale / reclaim）已落地；但 **agent / tool / step 执行事实尚未持久化**，live 与
+  durable 事件无统一契约，尚无只读 projection / admin API / Console（P3-1…P3-5 范围）。
 - **Research Plane**：`app/research/`（F1–F7，独立双后端迁移 `db/migrations/0001–0006`），
   存 ResearchRun/SubQuestion/Query/Source/Evidence + Claim/…/Reconciliation artifacts；
   fail-open 写入、不与 Agent 主链路耦合。
@@ -100,6 +102,11 @@ TaskRecord = terminal truth；governance event = durable observation；monitor l
 - F9 不新增第二 Runtime 控制面；`research_round` 是编排计数，不注入冻结 BudgetCounter；
   禁止 Redis/Kafka/Neo4j/VectorDB/scheduler/multi-instance/lease-heartbeat/Event
   Sourcing/generic·Planner·Citation·Conflict·Verification·Research-Manager Agent。
+- **P3 冻结指针（`D-P3-001…008`，2026-10 落地）**：Event Contract additive（不改 lifecycle_event /
+  terminalize / CAS / funnel / enforcement）；事件粒度默认 `tool`（step 默认关）；Admin API 默认关闭 +
+  仅回环 + 只读 + 字段最小化；LangSmith 关联沿用 `run_id`（不新增 `trace_id`）；transcript 不在 P3；
+  P3 默认 zero migration；新增 env MUST 同步 `.env.example`。权威：`DECISION.md` `D-P3-001…008` +
+  `P3_DECISION_CLOSURE_REPORT.md`。
 
 ## 5. Current F9 Contract
 
@@ -164,12 +171,25 @@ Deterministic Stopping → F7 finalization（normal 完成恰一次；F8 termina
    persistence（Spec §15 In 唯一未实现项）与 runtime recovery **不作为 F9-P0 阶段继续
    开发**；不创建 Batch9 feature branch。记录：Batch9 Readiness（§11 Decision
    Resolution）+ Final Completion Report
+10. **P3 Runtime Observability（当前 Phase；`D-P3-001…008` 已落地）**：P3-1 Event Contract →
+    P3-2 State Projection → P3-3 Admin API → P3-4 Frontend；P3-5 LangSmith integration（独立，
+    需依赖 / 数据外发单独裁决）。旧 P2-3/P2-4 的 runtime observability 部分 **superseded-by-P3**；
+    P2-3 残余（conversation transcript）**不在 P3**；P2-5（session 标题）**不受影响**
 
 ## 8. Important Known Limitations（仍影响后续开发的）
 
 - multi-instance governance / lease / heartbeat：未支持（F8 明确不做，见 Freeze Review）。
 - sweeper / startup 自动恢复（orphan reclaim 产品化）：未做（F8 文档化的 future）。
 - polling / status-sync / durability_gap 实时预览：未实现。
+- **P3 相关已知限制（`D-P3-001…008`）**：① conversation transcript / 对话历史**不在 P3**（刷新后仅
+  恢复执行态与时间线，不恢复完整对话内容）；② 事件粒度默认 `tool`、step 级默认关闭（细粒度诊断需
+  显式开启）；③ Admin API **默认关闭**（`RUNTIME_ADMIN_API=disabled`），默认配置下管理 Console
+  不可用；④ LangSmith **未接入**（P3-5 独立，依赖与数据外发需单独裁决）；⑤ `pending_terminal` 仍无
+  生产 flush 调用方（`D-Phase2-P2-2-012` 待办），投影必须容忍 `degraded_durability`；⑥ 跨进程重复
+  terminal event 为已知限制（`D-Phase2-P2-2-009`）。
+- **存量偏差（待单独裁决）**：`ARCHITECTURE.md` §9 要求新增环境变量同步 `.env.example`；P2-2 新增的
+  12 个 `RUNTIME_*` 变量**从未同步**（`.env.example` 中 `RUNTIME_` 条目为 0）。P3 已冻结「新增 env
+  MUST 同步 `.env.example`」；存量修复待裁决（详见 `P3_DECISION_CLOSURE_REPORT.md` §8.2）。
 - server 级 superseded 接线（AC2 future）：未做。
 - real provider E2E / real-LLM verifier·extractor·judge：本会话环境缺有效凭据，
   受控/门控验证（VERIFY_REAL_LLM=1 等）需凭据环境，不得伪造证据。
@@ -196,6 +216,9 @@ Deterministic Stopping → F7 finalization（normal 完成恰一次；F8 termina
 | F9 Batch 6 | **PASS / FROZEN**（2026-09-30 用户 Freeze） | `docs/plan/2026-09-29-f9-p0-batch6-implementation-report.md`；orchestrator tests 17；回归 sqlite 711 passed / 88 skipped / 0 failed；PG 全量 81 passed（Batch5 口径 77；governance 先 reset）；`_govadapt.py` DEFERRED / environment-limited |
 | F9 Batch 7 | **PASS / FROZEN**（2026-09-30 用户 Freeze） | `docs/plan/2026-09-30-f9-p0-batch7-implementation-report.md`；eval 16/16 + 8/8 scenarios；回归 sqlite 727 passed / 88 skipped / 0 failed；PG 全量 81 passed；branch `feature/f9-batch7-eval`（已 MERGED → main 619f6c7）；Compatibility Gap = None |
 | F9 Batch 8 | **PASS / FROZEN**（2026-10-01 用户 Freeze） | `docs/plan/2026-10-01-f9-p0-batch8-implementation-report.md`；calibration runner + 4 tests；61 点实验 → 维持现状默认值（无 production default 修改）；回归 sqlite 731 passed / 88 skipped / 0 failed；PG 81 passed；branch `feature/f9-batch8-calibration`（已 MERGED → main be6d625）；Compatibility Gap = None |
+| P2-1 默认 Runtime Policy 强制化 | **FROZEN + MERGED**（`dd7af9a`） | `D-Phase2-P2-1-001`；生产提交恒 governed |
+| P2-2 Runtime Health Plane（heartbeat / stale / reclaim） | **FROZEN + MERGED**（`884a681` + merge `8d9531d`） | `P2-2_SPEC_v2.md` Rev 2.2；`D-Phase2-P2-2-001…017`；`P2-2_DECISION_CLOSURE_REPORT.md`；`PROBLEM.md` P007 关闭 |
+| P3 Decision Closure | **APPROVED + LANDED**（docs-only commit；未实现） | `DECISION.md` `D-P3-001…008`；`P3_DECISION_CLOSURE_REPORT.md`；`P3_DECISION_UPDATE_PROPOSAL.md`；`P3_RUNTIME_OBSERVABILITY_DISCOVERY_REPORT.md` |
 | F9-P0 Core | **COMPLETE**（2026-10-01 用户收敛决定） | `docs/plan/2026-10-01-f9-p0-final-completion-report.md`（Final Completion Report）；Batch1–8 全部 PASS/FROZEN/MERGED；Batch9 = Deferred / Future P1 |
 
 ## 10. Important Files（改什么先看什么）
@@ -210,24 +233,26 @@ Deterministic Stopping → F7 finalization（normal 完成恰一次；F8 termina
 | 验证契约 | TESTING.md |
 | 当前状态 / 下一步 | PROJECT_CONTEXT.md（本文件） |
 | 当前 Feature 设计 | docs/spec/（当前阶段 Spec，例如 F9：2026-09-19-…） |
+| P3 决策与规划（当前 Phase） | `P3_DECISION_CLOSURE_REPORT.md`（Decision Closure + 冻结 / 实施约束）；`P3_DECISION_UPDATE_PROPOSAL.md`（`DECISION.md` 追加原文 + 裁决记录）；`P3_RUNTIME_OBSERVABILITY_DISCOVERY_REPORT.md`（L0 Discovery） |
 | F9-P0 收尾报告 | `docs/plan/2026-10-01-f9-p0-final-completion-report.md`（Final Completion Report）；Batch9 记录 `docs/plan/2026-10-01-f9-p0-batch9-readiness-review.md` |
 | 当前实现计划与证据 | docs/plan/（当前 Batch Plan/Report；历史报告勿默认读） |
 | 历史问题细节 | docs/problem/（仅命中时读） |
 
 ## 11. Current Next Action
 
-> **当前唯一允许的下一步：等待用户 Review F9-P0 收尾文档（Final Completion Report +
-> PROJECT_CONTEXT 收敛）；Review 通过后进入 README / Interview Material。**
+> **当前唯一允许的下一步：批准创建 `feature/p3-1-event-contract` branch（git 写操作）→ 进入
+> P3-1 Event Contract 的 L3 Spec 阶段（Spec → Readiness → Decision → Plan Review）。**
 > - F9-P0 Core Implementation = **COMPLETE**（2026-10-01 用户决定）；Batch 1–8 全部
 >   **PASS / FROZEN / MERGED**（B7 `619f6c7`、B8 `be6d625`；本地=远程一致）；Git Workflow
 >   规则在 Harness（AGENTS.md §10 / PROCESS.md §12）；
 > - **Batch9 = Deferred / Future P1**（用户决定停止推进）：不实施 round/query-identity
 >   persistence、不建 `feature/f9-batch9-round-persistence`、不改 F9 runtime；
 >   记录 = Batch9 Readiness §11 Decision Resolution + Final Completion Report；
-> - 当前阶段 = **Documentation / Presentation**：允许 docs / README / 项目说明材料；
->   禁止创建 Batch9 branch、修改 F9 runtime、修改 Batch1–8 frozen code、Commit 前扩大 scope；
-> - 用户 Review 批准后：进入 README 项目展示入口 → Interview Material；
->   文档全部完成后单独执行 Git 流程：Scope Audit → Commit → Push（逐步用户批准）；
+> - 当前阶段 = **P3 Runtime Observability（Decision Closure 已落地 / 未实现）**：允许 P3-1 Spec 等
+>   文档产物；禁止修改 `app/**` / DB / migration / 依赖、修改 P2-1/P2-2 frozen code 或 F8/F9 冻结
+>   契约、绕过 `D-P3-001…008` 冻结约束、Commit 前扩大 scope；
+> - P3 Decision Closure 已落地（`DECISION.md` `D-P3-001…008` + 本文件同步；docs-only commit，未 push）；
+>   P3-1 前置链剩余项 = **branch 创建**（需用户批准），完成后进入 Spec 起草；
 > - 未获用户指令前：不 Commit / Push / Merge；遇 frozen contract 冲突 → STOP 并报
 >   COMPATIBILITY GAP。
 
