@@ -60,11 +60,13 @@ class TestSessionsPostgres:
             assert sorted(gov_migrations.applied_migration_versions(store)) == [
                 "0001",
                 "0002",
+                "0003",
             ]
             gov_migrations.ensure_schema(store)  # 幂等
             assert sorted(gov_migrations.applied_migration_versions(store)) == [
                 "0001",
                 "0002",
+                "0003",
             ]
         finally:
             store.close()
